@@ -2,24 +2,25 @@
 echo "=== My Team Budget - Capacity & Budget Cockpit ==="
 echo ""
 
-# Start backend
-echo "Starting backend (Flask)..."
-cd "$(dirname "$0")/backend"
-if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
-else
-    source venv/bin/activate
+cd "$(dirname "$0")"
+ROOT_DIR="$(pwd)"
+
+# Install server deps if needed
+if [ ! -d "server/node_modules" ]; then
+    echo "Installing server dependencies..."
+    cd server && npm install && cd ..
 fi
-python app.py &
+
+# Start backend (Express + SQLite)
+echo "Starting server (Express.js + SQLite)..."
+cd "$ROOT_DIR/server"
+node server.js &
 BACKEND_PID=$!
-echo "Backend started (PID: $BACKEND_PID) on http://localhost:5001"
+echo "Server started (PID: $BACKEND_PID) on http://localhost:5001"
 
 # Start frontend
 echo "Starting frontend (React)..."
-cd "$(dirname "$0")/frontend"
+cd "$ROOT_DIR/frontend"
 BROWSER=none npm start &
 FRONTEND_PID=$!
 echo "Frontend started (PID: $FRONTEND_PID) on http://localhost:3000"
