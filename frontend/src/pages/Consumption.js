@@ -105,14 +105,21 @@ export default function Consumption() {
                     const val = getValue(r.id, m);
                     const over = val > budgetMonth && budgetMonth > 0;
                     return (
-                      <TableCell key={m} align="center" sx={{ p: 0.5 }}>
+                      <TableCell key={m} align="center" sx={{ p: 0.3 }}>
                         <TextField
                           size="small"
                           type="number"
                           value={val || ''}
                           onChange={e => setValue(r.id, m, e.target.value)}
-                          inputProps={{ step: 0.25, style: { textAlign: 'center', width: 50 } }}
-                          sx={{ '& .MuiInputBase-root': { bgcolor: over ? '#ffebee' : 'inherit' } }}
+                          inputProps={{ step: 0.25, style: { textAlign: 'center', padding: '6px 2px', fontSize: '0.85rem' } }}
+                          sx={{
+                            width: 70,
+                            '& .MuiInputBase-root': { bgcolor: over ? '#ffebee' : 'inherit' },
+                            '& input[type=number]::-webkit-inner-spin-button, & input[type=number]::-webkit-outer-spin-button': {
+                              WebkitAppearance: 'none', margin: 0,
+                            },
+                            '& input[type=number]': { MozAppearance: 'textfield' },
+                          }}
                         />
                       </TableCell>
                     );

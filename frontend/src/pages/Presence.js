@@ -272,17 +272,22 @@ export default function Presence() {
                       const joMax = data.jours_ouvrables_par_mois[m - 1] * r.etp;
                       const over = val > joMax;
                       return (
-                        <TableCell key={m} align="center" sx={{ p: 0.5 }}>
+                        <TableCell key={m} align="center" sx={{ p: 0.3 }}>
                           <TextField
                             size="small"
                             type="number"
                             value={val || ''}
                             onChange={e => setValue(r.resource_id, m, e.target.value)}
-                            inputProps={{ step: 0.5, style: { textAlign: 'center', width: 45 } }}
+                            inputProps={{ step: 0.5, style: { textAlign: 'center', padding: '6px 2px', fontSize: '0.85rem' } }}
                             sx={{
+                              width: 70,
                               '& .MuiInputBase-root': {
                                 bgcolor: over ? '#ffcdd2' : val > 0 ? '#e8f5e9' : 'inherit'
-                              }
+                              },
+                              '& input[type=number]::-webkit-inner-spin-button, & input[type=number]::-webkit-outer-spin-button': {
+                                WebkitAppearance: 'none', margin: 0,
+                              },
+                              '& input[type=number]': { MozAppearance: 'textfield' },
                             }}
                           />
                         </TableCell>
