@@ -263,10 +263,10 @@ export default function Dashboard() {
       </Grid>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={8}>
+        <Grid item xs={12} md={7}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>Budget vs Consommation Mensuelle</Typography>
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={380}>
               <BarChart data={barData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
@@ -279,26 +279,27 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </Paper>
         </Grid>
-        <Grid item xs={12} md={4}>
+        <Grid item xs={12} md={5}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>Budget par Activité</Typography>
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={380}>
               <PieChart>
                 <Pie
                   data={pieData}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
-                  cy="50%"
-                  outerRadius={100}
+                  cy="45%"
+                  outerRadius="35%"
                   label={({ name, value }) => `${name}: ${value}j`}
-                  labelLine
+                  labelLine={{ strokeWidth: 1 }}
                 >
                   {pieData.map((_, i) => (
                     <Cell key={i} fill={COLORS[i % COLORS.length]} />
                   ))}
                 </Pie>
                 <Tooltip />
+                <Legend />
               </PieChart>
             </ResponsiveContainer>
           </Paper>
@@ -306,10 +307,10 @@ export default function Dashboard() {
       </Grid>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={8}>
+        <Grid item xs={12} md={7}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>Courbe Cumulée</Typography>
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={380}>
               <LineChart data={cumulData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
@@ -322,24 +323,25 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </Paper>
         </Grid>
-        <Grid item xs={12} md={4}>
+        <Grid item xs={12} md={5}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>Répartition Interne / Externe</Typography>
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={380}>
               <PieChart>
                 <Pie
                   data={pieStatut}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
-                  cy="50%"
-                  outerRadius={100}
+                  cy="45%"
+                  outerRadius="35%"
                   label={({ name, value }) => `${name}: ${value}j`}
                 >
                   <Cell fill="#1b5e20" />
                   <Cell fill="#ff8f00" />
                 </Pie>
                 <Tooltip />
+                <Legend />
               </PieChart>
             </ResponsiveContainer>
           </Paper>
