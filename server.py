@@ -360,6 +360,155 @@ def delete_prevision(prevision_id):
     return cur.rowcount > 0
 
 
+def apply_resource_exit(data):
+    """
+    Sortie simplifiée : sélectionner une ressource existante, date d'effet, motif.
+    - Crée une prévision de sortie à partir des infos de la ressource
+    - Met à 0 les mois de la ressource après la date de départ
+    - Recalcule nb_jours_run
+    """
+    resource_id = data.get('resource_id')
+    date_effet = data.get('date_effet', '')
+    motif = data.get('motif', '')
+    year = data.get('year')
+
+    conn = get_db()
+    res = conn.execute('SELECT * FROM resources WHERE id=?', (resource_id,)).fetchone()
+    if not res:
+        conn.close()
+        return {'error': 'Ressource non trouvée'}
+
+    res = dict(res)
+    if not year:
+        year = res['year']
+
+    # Determine the departure month (0-indexed)
+    try:
+        dt = datetime.strptime(date_effet, '%Y-%m-%d')
+        depart_month = dt.month - 1  # 0 = jan
+    except ValueError:
+        conn.close()
+        return {'error': 'Date d\'effet invalide (format: YYYY-MM-DD)'}
+
+    # Save original monthly values for the prevision record (what we're removing)
+    prev_months = {}
+    for i, m in enumerate(MONTHS):
+        if i >= depart_month:
+            prev_months[m] = -(res[m] or 0)  # negative = sortie
+        else:
+            prev_months[m] = 0
+
+    # Create the prevision record
+    nb_jours_removed = sum(abs(v) for v in prev_months.values())
+    prev_data = {
+        'type': 'sortie', 'name': res['name'],
+        'activite': res['activite'] or '', 'tribu': res['tribu'] or '',
+        'statut': res['statut'], 'etp': res['etp'],
+        'repartition_run': res['repartition_run'],
+        'date_effet': date_effet, 'motif': motif,
+        'year': year, 'nb_jours_run': rd(nb_jours_removed),
+        'resource_id': resource_id,
+    }
+    prev_data.update(prev_months)
+
+    cur = conn.execute('''
+        INSERT INTO previsions (type, name, activite, tribu, statut, etp, repartition_run,
+            date_effet, motif, year, nb_jours_run,
+            jan, feb, mar, apr, may, jun, jul, aug, sep, oct, nov, dec)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ''', (
+        'sortie', res['name'], res['activite'] or '', res['tribu'] or '',
+        res['statut'], res['etp'], res['repartition_run'],
+        date_effet, motif, year, rd(nb_jours_removed),
+        prev_months['jan'], prev_months['feb'], prev_months['mar'],
+        prev_months['apr'], prev_months['may'], prev_months['jun'],
+        prev_months['jul'], prev_months['aug'], prev_months['sep'],
+        prev_months['oct'], prev_months['nov'], prev_months['dec'],
+    ))
+    prevision_id = cur.lastrowid
+
+    # Zero out the resource months after departure
+    updates = {}
+    for i, m in enumerate(MONTHS):
+        if i >= depart_month:
+            updates[m] = 0
+
+    set_clause = ', '.join(f'{m}=?' for m in updates.keys())
+    new_run = sum(res[m] or 0 for i, m in enumerate(MONTHS) if i < depart_month)
+    conn.execute(
+        f'UPDATE resources SET {set_clause}, nb_jours_run=? WHERE id=?',
+        list(updates.values()) + [rd(new_run), resource_id]
+    )
+    conn.commit()
+
+    prev_row = conn.execute('SELECT * FROM previsions WHERE id=?', (prevision_id,)).fetchone()
+    updated_res = conn.execute('SELECT * FROM resources WHERE id=?', (resource_id,)).fetchone()
+    conn.close()
+
+    return {
+        'prevision': row_to_dict(prev_row),
+        'resource': row_to_dict(updated_res),
+        'jours_removed': rd(nb_jours_removed),
+    }
+
+
+def apply_resource_entry(data):
+    """
+    Entrée prévisionnelle : crée une nouvelle ressource avec budget distribué
+    à partir de la date d'effet, et crée la prévision associée.
+    """
+    date_effet = data.get('date_effet', '')
+    try:
+        dt = datetime.strptime(date_effet, '%Y-%m-%d')
+        start_month = dt.month - 1
+    except ValueError:
+        start_month = 0
+
+    year = data.get('year', datetime.now().year)
+    etp = safe_float(data.get('etp'), 1)
+    run = safe_float(data.get('repartition_run'), 1)
+    nb_jours_total = safe_float(data.get('nb_jours_total'),
+                                 206 if data.get('statut') == 'Interne' else 210)
+    nb_jours_run = rd(nb_jours_total * etp * run)
+
+    # Distribute budget only on active months
+    active_months = 12 - start_month
+    monthly_val = rd(nb_jours_run / 12) if active_months > 0 else 0
+
+    month_data = {}
+    for i, m in enumerate(MONTHS):
+        month_data[m] = monthly_val if i >= start_month else 0
+
+    # Create the resource
+    resource = add_resource({
+        'name': data.get('name', ''),
+        'activite': data.get('activite', ''),
+        'tribu': data.get('tribu', ''),
+        'statut': data.get('statut', 'Interne'),
+        'etp': etp, 'repartition_run': run,
+        'nb_jours_total': nb_jours_total,
+        'year': year,
+        **month_data,
+    })
+
+    # Create the prevision record
+    prev = add_prevision({
+        'type': 'entree', 'name': data.get('name', ''),
+        'activite': data.get('activite', ''),
+        'tribu': data.get('tribu', ''),
+        'statut': data.get('statut', 'Interne'),
+        'etp': etp, 'repartition_run': run,
+        'date_effet': date_effet, 'motif': data.get('motif', ''),
+        'year': year,
+        **month_data,
+    })
+
+    return {
+        'prevision': prev,
+        'resource': resource,
+    }
+
+
 def _distribute_prevision_months(data, date_effet):
     try:
         dt = datetime.strptime(date_effet, '%Y-%m-%d')
@@ -816,6 +965,16 @@ class BudgetHandler(SimpleHTTPRequestHandler):
 
         elif path == '/api/previsions':
             result = add_prevision(data)
+            return self._json(result, 201)
+
+        elif path == '/api/previsions/sortie-ressource':
+            result = apply_resource_exit(data)
+            if 'error' in result:
+                return self._json(result, 400)
+            return self._json(result, 201)
+
+        elif path == '/api/previsions/entree-ressource':
+            result = apply_resource_entry(data)
             return self._json(result, 201)
 
         elif path == '/api/presence':

@@ -16,6 +16,8 @@ export const getPrevisions = (year) => api.get('/previsions', { params: { year }
 export const addPrevision = (data) => api.post('/previsions', data);
 export const updatePrevision = (id, data) => api.put(`/previsions/${id}`, data);
 export const deletePrevision = (id) => api.delete(`/previsions/${id}`);
+export const applySortieRessource = (data) => api.post('/previsions/sortie-ressource', data);
+export const applyEntreeRessource = (data) => api.post('/previsions/entree-ressource', data);
 
 export const getDashboard = (year) => api.get('/dashboard', { params: { year } });
 export const getYears = () => api.get('/years');
