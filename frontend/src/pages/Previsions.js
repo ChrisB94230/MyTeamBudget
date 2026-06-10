@@ -240,7 +240,7 @@ export default function Previsions() {
       {tab === 1 && renderTable(exits, 'sortie')}
 
       {/* ==================== DIALOG SORTIE (simplifié) ==================== */}
-      <Dialog open={sortieOpen} onClose={() => setSortieOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={sortieOpen} onClose={() => setSortieOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle sx={{ bgcolor: '#ffebee' }}>
           <PersonRemoveIcon sx={{ mr: 1, verticalAlign: 'bottom' }} />
           Déclarer une sortie de ressource
@@ -253,13 +253,23 @@ export default function Previsions() {
                 getOptionLabel={(r) => `${r.name} — ${r.activite} (${r.statut}, ${r.etp} ETP)`}
                 value={selectedResource || null}
                 onChange={(_, val) => setSortieForm({ ...sortieForm, resource_id: val ? val.id : null })}
+                renderOption={(props, r) => (
+                  <li {...props} key={r.id}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', gap: 2 }}>
+                      <Typography><strong>{r.name}</strong></Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {r.activite} · {r.statut} · {r.etp} ETP · {r.nb_jours_run}j
+                      </Typography>
+                    </Box>
+                  </li>
+                )}
                 renderInput={(params) => (
-                  <TextField {...params} label="Sélectionner la ressource" fullWidth />
+                  <TextField {...params} label="Sélectionner la ressource à sortir" fullWidth />
                 )}
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth label="Date de départ" type="date"
                 value={sortieForm.date_effet}
@@ -267,7 +277,7 @@ export default function Previsions() {
                 onChange={e => setSortieForm({ ...sortieForm, date_effet: e.target.value })}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
                 <InputLabel>Motif</InputLabel>
                 <Select value={sortieForm.motif} label="Motif"

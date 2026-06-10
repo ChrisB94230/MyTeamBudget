@@ -282,24 +282,30 @@ export default function Dashboard() {
         <Grid item xs={12} md={5}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>Budget par Activité</Typography>
-            <ResponsiveContainer width="100%" height={380}>
+            <ResponsiveContainer width="100%" height={420}>
               <PieChart>
                 <Pie
                   data={pieData}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
-                  cy="45%"
-                  outerRadius="35%"
-                  label={({ name, value }) => `${name}: ${value}j`}
+                  cy="42%"
+                  outerRadius="38%"
+                  label={({ name, value, percent }) => `${name} ${Math.round(percent * 100)}%`}
                   labelLine={{ strokeWidth: 1 }}
+                  fontSize={12}
                 >
                   {pieData.map((_, i) => (
                     <Cell key={i} fill={COLORS[i % COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip />
-                <Legend />
+                <Tooltip formatter={(value) => `${value} j`} />
+                <Legend
+                  formatter={(value, entry) => {
+                    const item = pieData.find(d => d.name === value);
+                    return `${value}: ${item ? item.value : ''}j`;
+                  }}
+                />
               </PieChart>
             </ResponsiveContainer>
           </Paper>
@@ -326,21 +332,22 @@ export default function Dashboard() {
         <Grid item xs={12} md={5}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>Répartition Interne / Externe</Typography>
-            <ResponsiveContainer width="100%" height={380}>
+            <ResponsiveContainer width="100%" height={420}>
               <PieChart>
                 <Pie
                   data={pieStatut}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
-                  cy="45%"
-                  outerRadius="35%"
+                  cy="42%"
+                  outerRadius="38%"
                   label={({ name, value }) => `${name}: ${value}j`}
+                  fontSize={13}
                 >
                   <Cell fill="#1b5e20" />
                   <Cell fill="#ff8f00" />
                 </Pie>
-                <Tooltip />
+                <Tooltip formatter={(value) => `${value} j`} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
