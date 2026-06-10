@@ -1136,9 +1136,66 @@ def seed_if_empty():
 
 # ==================== MAIN ====================
 
+def apply_pending_exits():
+    """
+    Rattrapage : pour chaque prévision de sortie existante avec une date_effet,
+    vérifie si la ressource du même nom/année a encore du budget après la date de départ.
+    Si oui, met les mois à 0 et recalcule nb_jours_run.
+    Ne s'exécute qu'une fois (idempotent : ne modifie rien si déjà appliqué).
+    """
+    conn = get_db()
+    exits = conn.execute("SELECT * FROM previsions WHERE type='sortie' AND date_effet != ''").fetchall()
+
+    fixed = 0
+    for ex in exits:
+        date_effet = ex['date_effet']
+        try:
+            dt = datetime.strptime(date_effet, '%Y-%m-%d')
+            depart_month = dt.month - 1  # 0-indexed
+        except ValueError:
+            continue
+
+        name = ex['name']
+        year = ex['year']
+
+        # Find matching resource by name + year
+        res = conn.execute(
+            'SELECT * FROM resources WHERE name=? AND year=?', (name, year)
+        ).fetchone()
+        if not res:
+            continue
+
+        # Check if months after departure still have budget (not yet zeroed)
+        has_remaining = False
+        for i, m in enumerate(MONTHS):
+            if i >= depart_month and (res[m] or 0) > 0:
+                has_remaining = True
+                break
+
+        if not has_remaining:
+            continue  # Already applied
+
+        # Zero out months after departure
+        new_run = sum(res[m] or 0 for i, m in enumerate(MONTHS) if i < depart_month)
+        updates = {m: 0 for i, m in enumerate(MONTHS) if i >= depart_month}
+        set_clause = ', '.join(f'{m}=?' for m in updates.keys())
+        conn.execute(
+            f'UPDATE resources SET {set_clause}, nb_jours_run=? WHERE id=?',
+            list(updates.values()) + [rd(new_run), res['id']]
+        )
+        fixed += 1
+        print(f'  ✅ Sortie appliquée : {name} — mois à 0 à partir de {MONTH_LABELS[depart_month]} (budget: {rd(new_run)}j)')
+
+    if fixed > 0:
+        conn.commit()
+        print(f'  → {fixed} sortie(s) existante(s) appliquée(s) sur les ressources')
+    conn.close()
+
+
 if __name__ == '__main__':
     init_db()
     seed_if_empty()
+    apply_pending_exits()
 
     if not os.path.isdir(BUILD_DIR):
         print(f'⚠️  Dossier frontend/build/ non trouvé.')
