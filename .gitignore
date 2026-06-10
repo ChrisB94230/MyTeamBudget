@@ -1,7 +1,9 @@
 node_modules/
-build/
 .DS_Store
 *.pyc
+__pycache__/
 .env
 data/budget.db
+data/budget.db-wal
+data/budget.db-shm
 server/uploads/
