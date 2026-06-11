@@ -589,6 +589,10 @@ def get_presence_dashboard(year=None):
     presence_rows = conn.execute(
         'SELECT * FROM presence WHERE year=?', (year,)
     ).fetchall()
+    # Load exit previsions to adjust projections for departed resources
+    exit_previsions = conn.execute(
+        "SELECT * FROM previsions WHERE year=? AND type='sortie'", (year,)
+    ).fetchall()
     conn.close()
 
     now = datetime.now()
@@ -601,16 +605,43 @@ def get_presence_dashboard(year=None):
     for p in presence_rows:
         pres_map[(p['resource_id'], p['month'])] = p['jours_travailles']
 
+    # Build exit map: resource_name (lower) -> last active month
+    exit_month_by_name = {}
+    for pv in exit_previsions:
+        pv_name = pv['name'].strip().lower()
+        date_str = pv['date_effet'] or ''
+        try:
+            exit_m = int(date_str.split('-')[1]) if '-' in date_str else 0
+        except (ValueError, IndexError):
+            exit_m = 0
+        if exit_m > 0:
+            exit_month_by_name[pv_name] = exit_m
+
     results = []
     alerts = []
 
     for res in resources:
         rid = res['id']
+        res_name_lower = res['name'].strip().lower()
         etp = safe_float(res['etp'], 1)
         nb_jours_total = safe_float(
             res['nb_jours_total'], 206 if res['statut'] == 'Interne' else 210
         )
-        limite = nb_jours_total * etp
+
+        # Check if this resource has an exit
+        exit_month = exit_month_by_name.get(res_name_lower, 0)
+        is_exited = exit_month > 0 and exit_month <= current_month
+        is_exiting = exit_month > current_month  # will exit later this year
+
+        # Adjust limite based on exit: only count months actually worked
+        if exit_month > 0:
+            # Resource only works exit_month months out of 12
+            active_months = exit_month
+            jo_active = sum(JOURS_OUVRABLES_PAR_MOIS[:active_months])
+            limite = rd((nb_jours_total * etp * jo_active) / jo_annee)
+        else:
+            active_months = 12
+            limite = nb_jours_total * etp
 
         monthly = {}
         total_t = 0
@@ -624,10 +655,15 @@ def get_presence_dashboard(year=None):
 
         jours_restants = rd(limite - total_t)
         rythme = total_t / mois_actifs if mois_actifs > 0 else 0
-        mois_restants = 12 - current_month
+
+        # For projection: only project remaining months up to exit (or year end)
+        if exit_month > 0:
+            mois_restants_proj = max(0, exit_month - current_month)
+        else:
+            mois_restants_proj = 12 - current_month
 
         if rythme > 0:
-            projection = total_t + (rythme * mois_restants)
+            projection = total_t + (rythme * mois_restants_proj)
             m_avant_ep = jours_restants / rythme if jours_restants > 0 else 0
             mois_ep = current_month + m_avant_ep
         else:
@@ -635,29 +671,32 @@ def get_presence_dashboard(year=None):
             mois_ep = None
 
         jo_mois_moyen = jo_annee / 12
-        rythme_theo = (limite / jo_annee) * jo_mois_moyen
+        rythme_theo = (limite / jo_annee) * jo_mois_moyen if jo_annee > 0 else 0
 
-        jo_etp = jo_ecoules * etp
+        # Congés: adjust for exit month
+        months_for_conges = min(current_month, exit_month) if exit_month > 0 else current_month
+        jo_etp = sum(JOURS_OUVRABLES_PAR_MOIS[:months_for_conges]) * etp
         conges_pris = rd(max(0, jo_etp - total_t))
-        conges_attendus = max(0, rd(jo_etp - (limite * current_month / 12)))
+        conges_attendus = max(0, rd(jo_etp - (limite * months_for_conges / max(active_months, 1))))
 
         alert_level = 'ok'
         alert_msg = ''
 
-        if mois_actifs > 0 and current_month >= 3:
-            if mois_ep is not None and mois_ep <= 9:
+        # No alerts for resources already exited
+        if not is_exited and mois_actifs > 0 and current_month >= 3:
+            if mois_ep is not None and mois_ep <= 9 and (exit_month == 0 or mois_ep <= exit_month):
                 alert_level = 'critical'
                 label = MONTH_LABELS[min(int(mois_ep), 11)]
                 alert_msg = f"Budget épuisé vers {label} — risque d'arrêt anticipé"
-            elif mois_ep is not None and mois_ep <= 11:
+            elif mois_ep is not None and mois_ep <= 11 and (exit_month == 0 or mois_ep <= exit_month):
                 alert_level = 'warning'
                 label = MONTH_LABELS[min(int(mois_ep), 11)]
                 alert_msg = f"Budget épuisé vers {label} — congés insuffisants"
-            elif conges_pris < conges_attendus * 0.5 and current_month >= 4:
+            elif conges_pris < conges_attendus * 0.5 and current_month >= 4 and not is_exiting:
                 alert_level = 'warning'
                 alert_msg = f"Très peu de congés pris ({conges_pris}j vs {conges_attendus}j attendus)"
 
-            if projection > limite * 1.05 and alert_level != 'critical':
+            if projection > limite * 1.05 and alert_level != 'critical' and not is_exited:
                 alert_level = 'warning'
                 alert_msg = f"Projection {round(projection)}j dépasse la limite {round(limite)}j"
 
@@ -672,6 +711,8 @@ def get_presence_dashboard(year=None):
             'mois_epuisement': round(mois_ep, 1) if mois_ep else None,
             'conges_pris': conges_pris, 'conges_attendus': conges_attendus,
             'alert_level': alert_level, 'alert_msg': alert_msg,
+            'exit_month': exit_month if exit_month > 0 else None,
+            'is_exited': is_exited,
         }
         results.append(entry)
 
