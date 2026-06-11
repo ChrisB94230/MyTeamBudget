@@ -256,17 +256,24 @@ export default function Previsions() {
                 renderOption={(props, r) => (
                   <li {...props} key={r.id}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', gap: 2 }}>
-                      <Typography><strong>{r.name}</strong></Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography noWrap={false}><strong>{r.name}</strong></Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
                         {r.activite} · {r.statut} · {r.etp} ETP · {r.nb_jours_run}j
                       </Typography>
                     </Box>
                   </li>
                 )}
+                ListboxProps={{ sx: { maxHeight: 300 } }}
                 renderInput={(params) => (
-                  <TextField {...params} label="Sélectionner la ressource à sortir" fullWidth />
+                  <TextField {...params} label="Sélectionner la ressource à sortir" fullWidth
+                    sx={{ '& .MuiInputBase-root': { fontSize: '1rem' } }}
+                  />
                 )}
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                sx={{
+                  '& .MuiAutocomplete-inputRoot': { flexWrap: 'nowrap' },
+                  '& .MuiAutocomplete-input': { minWidth: '300px !important' },
+                }}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
