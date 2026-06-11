@@ -7,3 +7,4 @@ data/budget.db
 data/budget.db-wal
 data/budget.db-shm
 server/uploads/
+logs/

@@ -15,15 +15,43 @@ import tempfile
 import shutil
 import zipfile
 import re
+import logging
+import traceback
 import xml.etree.ElementTree as ET
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
 from io import BytesIO
+from logging.handlers import RotatingFileHandler
 
 PORT = 5001
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
+LOG_DIR = os.path.join(BASE_DIR, 'logs')
+
+# ==================== LOGGING ====================
+
+os.makedirs(LOG_DIR, exist_ok=True)
+
+logger = logging.getLogger('budget_server')
+logger.setLevel(logging.DEBUG)
+
+# File handler — rotating 5 MB x 3 backups, in logs/server.log
+_fh = RotatingFileHandler(
+    os.path.join(LOG_DIR, 'server.log'),
+    maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8',
+)
+_fh.setLevel(logging.DEBUG)
+_fh.setFormatter(logging.Formatter(
+    '%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'
+))
+logger.addHandler(_fh)
+
+# Console handler — INFO and above
+_ch = logging.StreamHandler(sys.stderr)
+_ch.setLevel(logging.INFO)
+_ch.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+logger.addHandler(_ch)
 DB_PATH = os.path.join(DATA_DIR, 'budget.db')
 BUILD_DIR = os.path.join(BASE_DIR, 'frontend', 'build')
 
@@ -859,9 +887,11 @@ def get_comparison(selected_years):
 
 def parse_xlsx(file_bytes):
     """Parse an .xlsx file using only built-in Python modules (zipfile + xml)."""
+    logger.info(f"parse_xlsx: début, taille fichier = {len(file_bytes)} octets")
     NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 
     with zipfile.ZipFile(BytesIO(file_bytes)) as zf:
+        logger.debug(f"parse_xlsx: fichiers dans le zip = {zf.namelist()}")
         # Read shared strings
         shared_strings = []
         if 'xl/sharedStrings.xml' in zf.namelist():
@@ -869,18 +899,23 @@ def parse_xlsx(file_bytes):
             for si in tree.findall(f'{NS}si'):
                 texts = si.findall(f'.//{NS}t')
                 shared_strings.append(''.join(t.text or '' for t in texts))
+            logger.debug(f"parse_xlsx: {len(shared_strings)} shared strings chargées")
+        else:
+            logger.warning("parse_xlsx: pas de sharedStrings.xml dans le fichier")
 
         # Read sheet names from workbook
         wb_tree = ET.parse(zf.open('xl/workbook.xml'))
         sheets_info = []
         for s in wb_tree.findall(f'{NS}sheets/{NS}sheet'):
             sheets_info.append(s.get('name'))
+        logger.info(f"parse_xlsx: onglets trouvés = {sheets_info}")
 
         # Parse all sheets
         result = {}
         for idx, sheet_name in enumerate(sheets_info):
             sheet_file = f'xl/worksheets/sheet{idx + 1}.xml'
             if sheet_file not in zf.namelist():
+                logger.warning(f"parse_xlsx: fichier {sheet_file} absent pour onglet '{sheet_name}'")
                 continue
             tree = ET.parse(zf.open(sheet_file))
             rows_data = []
@@ -916,7 +951,9 @@ def parse_xlsx(file_bytes):
                 else:
                     rows_data.append([])
             result[sheet_name] = rows_data
+            logger.debug(f"parse_xlsx: onglet '{sheet_name}' = {len(rows_data)} lignes")
 
+    logger.info(f"parse_xlsx: terminé, {len(result)} onglet(s) parsé(s)")
     return result
 
 
@@ -964,8 +1001,14 @@ def detect_column_type(header):
 
 def parse_excel_sheet(rows):
     """Parse a sheet into structured data: find header row, extract per-resource per-month values."""
+    logger.info(f"parse_excel_sheet: début, {len(rows)} lignes à analyser")
     if len(rows) < 3:
+        logger.error("parse_excel_sheet: feuille trop courte (< 3 lignes)")
         return {'error': 'Feuille trop courte, pas assez de lignes'}
+
+    # Log first rows for debugging
+    for i, row in enumerate(rows[:8]):
+        logger.debug(f"  ligne {i}: {row[:6]}{'...' if len(row) > 6 else ''}")
 
     # Find the header row (contains 'Ressource' or 'ressource')
     header_row_idx = None
@@ -978,9 +1021,12 @@ def parse_excel_sheet(rows):
             break
 
     if header_row_idx is None:
+        logger.error("parse_excel_sheet: colonne 'Ressource' non trouvée dans aucune ligne")
+        logger.error(f"  Premières cellules de chaque ligne: {[r[:3] if r else [] for r in rows[:10]]}")
         return {'error': 'Colonne "Ressource" non trouvée dans les en-têtes'}
 
     headers = [str(c).strip() for c in rows[header_row_idx]]
+    logger.info(f"parse_excel_sheet: en-têtes trouvés en ligne {header_row_idx}: {headers}")
 
     # Detect year from metadata rows above the header
     detected_year = None
@@ -992,10 +1038,12 @@ def parse_excel_sheet(rows):
                 break
         if detected_year:
             break
+    logger.info(f"parse_excel_sheet: année détectée = {detected_year}")
 
     # Map columns
     col_map = []  # list of (col_index, type, month)
     resource_col = None
+    unrecognized = []
     for ci, h in enumerate(headers):
         hl = h.lower()
         if hl in ('ressource', 'resource', 'nom'):
@@ -1005,8 +1053,15 @@ def parse_excel_sheet(rows):
         month = detect_month_from_header(h)
         if ctype and month:
             col_map.append((ci, ctype, month))
+        elif h and h.strip():
+            unrecognized.append(f"col{ci}='{h}' (type={ctype}, mois={month})")
+
+    if unrecognized:
+        logger.warning(f"parse_excel_sheet: colonnes non reconnues: {unrecognized}")
+    logger.info(f"parse_excel_sheet: {len(col_map)} colonnes mappées, resource_col={resource_col}")
 
     if resource_col is None:
+        logger.error("parse_excel_sheet: colonne Ressource introuvable après mapping")
         return {'error': 'Colonne "Ressource" non trouvée'}
 
     # Extract data per resource
@@ -1030,6 +1085,10 @@ def parse_excel_sheet(rows):
                 res_data[ctype][month] = val
         resources.append(res_data)
 
+    logger.info(f"parse_excel_sheet: {len(resources)} ressources extraites")
+    if resources:
+        logger.debug(f"  Première ressource: {resources[0]['name']} — présence={resources[0]['presence']}")
+
     return {
         'detected_year': detected_year,
         'resources': resources,
@@ -1039,28 +1098,47 @@ def parse_excel_sheet(rows):
 
 def preview_excel_import(file_bytes, sheet_name=None, year=None):
     """Parse xlsx and compare with DB data. Returns diff for user review."""
+    logger.info(f"preview_excel_import: début (sheet={sheet_name}, year={year}, size={len(file_bytes)})")
+
     try:
         workbook = parse_xlsx(file_bytes)
+    except zipfile.BadZipFile:
+        msg = "Le fichier n'est pas un .xlsx valide (pas un fichier ZIP). Vérifiez qu'il s'agit bien d'un fichier Excel .xlsx et non .xls"
+        logger.error(f"preview_excel_import: {msg}")
+        return {'error': msg}
+    except ET.ParseError as e:
+        msg = f"Erreur de parsing XML dans le fichier Excel: {str(e)}"
+        logger.error(f"preview_excel_import: {msg}")
+        logger.error(traceback.format_exc())
+        return {'error': msg}
     except Exception as e:
-        return {'error': f'Erreur de lecture du fichier Excel: {str(e)}'}
+        msg = f"Erreur de lecture du fichier Excel: {type(e).__name__}: {str(e)}"
+        logger.error(f"preview_excel_import: {msg}")
+        logger.error(traceback.format_exc())
+        return {'error': msg}
 
     if not workbook:
-        return {'error': 'Fichier Excel vide'}
+        logger.error("preview_excel_import: workbook vide après parsing")
+        return {'error': 'Fichier Excel vide — aucun onglet trouvé'}
 
     sheet_names = list(workbook.keys())
+    logger.info(f"preview_excel_import: onglets disponibles = {sheet_names}")
 
     # If no sheet specified, try the first one (or let user choose)
     if sheet_name is None and len(sheet_names) == 1:
         sheet_name = sheet_names[0]
 
     if sheet_name is None:
+        logger.info(f"preview_excel_import: plusieurs onglets, demande sélection utilisateur")
         return {'sheets': sheet_names, 'need_sheet_selection': True}
 
     if sheet_name not in workbook:
+        logger.error(f"preview_excel_import: onglet '{sheet_name}' non trouvé parmi {sheet_names}")
         return {'error': f'Onglet "{sheet_name}" non trouvé', 'sheets': sheet_names}
 
     parsed = parse_excel_sheet(workbook[sheet_name])
     if 'error' in parsed:
+        logger.error(f"preview_excel_import: erreur dans parse_excel_sheet: {parsed['error']}")
         return parsed
 
     if year is None:
@@ -1205,6 +1283,7 @@ def preview_excel_import(file_bytes, sheet_name=None, year=None):
 
 def apply_excel_import(data):
     """Apply confirmed import changes."""
+    logger.info("apply_excel_import: début")
     year = data.get('year', datetime.now().year)
     updates = data.get('updates', [])
     resolved_conflicts = data.get('resolved_conflicts', [])
@@ -1334,6 +1413,7 @@ def apply_excel_import(data):
 
     conn.commit()
     conn.close()
+    logger.info(f"apply_excel_import: terminé, {applied} modification(s) appliquée(s)")
     return {'status': 'ok', 'applied': applied}
 
 
@@ -1410,6 +1490,17 @@ class BudgetHandler(SimpleHTTPRequestHandler):
             self.wfile.write(csv_content.encode('utf-8'))
             return
 
+        elif path == '/api/logs':
+            # Return last N lines of log file for troubleshooting
+            n = int(params.get('lines', ['100'])[0])
+            log_file = os.path.join(LOG_DIR, 'server.log')
+            if os.path.exists(log_file):
+                with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                    lines = f.readlines()
+                    last_lines = lines[-n:]
+                return self._json({'lines': [l.rstrip() for l in last_lines], 'total': len(lines)})
+            return self._json({'lines': [], 'total': 0})
+
         # Serve static files (React SPA)
         elif not path.startswith('/api/'):
             # For SPA: serve index.html for non-file paths
@@ -1477,37 +1568,59 @@ class BudgetHandler(SimpleHTTPRequestHandler):
         elif path == '/api/import/preview':
             # Handle multipart file upload
             content_type = self.headers.get('Content-Type', '')
+            logger.info(f"POST /api/import/preview — Content-Type: {content_type[:80]}, body size: {len(body)}")
             if 'multipart/form-data' in content_type:
-                # Re-read the body (already consumed above, so use `body` variable)
-                environ = {
-                    'REQUEST_METHOD': 'POST',
-                    'CONTENT_TYPE': content_type,
-                    'CONTENT_LENGTH': str(len(body)),
-                }
-                fs = cgi.FieldStorage(
-                    fp=BytesIO(body),
-                    environ=environ,
-                    keep_blank_values=True,
-                )
-                file_item = fs['file'] if 'file' in fs else None
-                sheet_name = fs.getvalue('sheet_name', None)
-                import_year = fs.getvalue('year', None)
-                if import_year:
-                    import_year = int(import_year)
+                try:
+                    environ = {
+                        'REQUEST_METHOD': 'POST',
+                        'CONTENT_TYPE': content_type,
+                        'CONTENT_LENGTH': str(len(body)),
+                    }
+                    fs = cgi.FieldStorage(
+                        fp=BytesIO(body),
+                        environ=environ,
+                        keep_blank_values=True,
+                    )
+                    logger.debug(f"  FieldStorage keys: {list(fs.keys())}")
 
-                if file_item is None or not file_item.file:
-                    return self._json({'error': 'Aucun fichier reçu'}, 400)
+                    file_item = fs['file'] if 'file' in fs else None
+                    sheet_name = fs.getvalue('sheet_name', None)
+                    import_year = fs.getvalue('year', None)
+                    if import_year:
+                        import_year = int(import_year)
 
-                file_bytes = file_item.file.read()
-                result = preview_excel_import(file_bytes, sheet_name, import_year)
-                return self._json(result)
+                    if file_item is None or not file_item.file:
+                        logger.error("  Aucun fichier trouvé dans le form-data")
+                        logger.error(f"  Keys reçues: {list(fs.keys())}")
+                        return self._json({'error': 'Aucun fichier reçu. Vérifiez que le champ s\'appelle "file".'}, 400)
+
+                    file_bytes = file_item.file.read()
+                    file_name = getattr(file_item, 'filename', 'inconnu')
+                    logger.info(f"  Fichier reçu: '{file_name}', {len(file_bytes)} octets, sheet={sheet_name}, year={import_year}")
+
+                    if len(file_bytes) == 0:
+                        logger.error("  Fichier vide (0 octets)")
+                        return self._json({'error': 'Le fichier reçu est vide (0 octets)'}, 400)
+
+                    result = preview_excel_import(file_bytes, sheet_name, import_year)
+                    logger.info(f"  Résultat preview: {json.dumps({k: v for k, v in result.items() if k == 'summary' or k == 'error'}, ensure_ascii=False)}")
+                    return self._json(result)
+                except Exception as e:
+                    logger.error(f"  Exception dans /api/import/preview: {type(e).__name__}: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    return self._json({'error': f'Erreur serveur lors de l\'analyse: {type(e).__name__}: {str(e)}'}, 500)
             else:
                 # JSON body with sheet_name selection (file already uploaded)
                 return self._json({'error': 'Content-Type multipart/form-data requis'}, 400)
 
         elif path == '/api/import/apply':
-            result = apply_excel_import(data)
-            return self._json(result)
+            try:
+                result = apply_excel_import(data)
+                return self._json(result)
+            except Exception as e:
+                logger.error(f"Exception dans /api/import/apply: {type(e).__name__}: {str(e)}")
+                logger.error(traceback.format_exc())
+                return self._json({'error': f'Erreur lors de l\'application: {type(e).__name__}: {str(e)}'}, 500)
 
         else:
             return self._json({'error': 'Not found'}, 404)
@@ -1713,6 +1826,13 @@ def apply_pending_exits():
 
 
 if __name__ == '__main__':
+    logger.info("=" * 50)
+    logger.info("Démarrage du serveur My Team Budget")
+    logger.info(f"Python {sys.version}")
+    logger.info(f"Base dir: {BASE_DIR}")
+    logger.info(f"DB: {DB_PATH}")
+    logger.info(f"Logs: {os.path.join(LOG_DIR, 'server.log')}")
+
     init_db()
     seed_if_empty()
     apply_pending_exits()
@@ -1725,12 +1845,16 @@ if __name__ == '__main__':
     print(f'\n{"="*50}')
     print(f'  My Team Budget — Serveur démarré')
     print(f'  http://localhost:{PORT}')
+    print(f'  Logs: {os.path.join(LOG_DIR, "server.log")}')
     print(f'  Ctrl+C pour arrêter')
     print(f'{"="*50}\n')
+
+    logger.info(f"Serveur prêt sur http://localhost:{PORT}")
 
     server = HTTPServer(('0.0.0.0', PORT), BudgetHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        logger.info("Serveur arrêté par l'utilisateur")
         print('\nServeur arrêté.')
         server.server_close()

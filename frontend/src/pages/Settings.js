@@ -15,7 +15,7 @@ import PersonRemoveIcon from '@mui/icons-material/PersonRemove';
 import SyncIcon from '@mui/icons-material/Sync';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import { getSettings, updateSettings, getYears, previewExcelImport, applyExcelImport } from '../services/api';
+import { getSettings, updateSettings, getYears, previewExcelImport, applyExcelImport, getLogs } from '../services/api';
 
 const MONTH_LABELS = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
   'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
@@ -50,6 +50,8 @@ export default function Settings() {
   const [showNewRes, setShowNewRes] = useState(true);
   const [showConflicts, setShowConflicts] = useState(true);
   const [showExits, setShowExits] = useState(true);
+  const [logsDialog, setLogsDialog] = useState(false);
+  const [logLines, setLogLines] = useState([]);
 
   useEffect(() => {
     getYears().then(res => setYears(res.data));
@@ -121,9 +123,25 @@ export default function Settings() {
       (data.inactive_exits || []).forEach((e, i) => { eSel[i] = true; });
       setSelectedExits(eSel);
     } catch (err) {
-      setImportError(err.response?.data?.error || 'Erreur lors de l\'analyse du fichier');
+      const serverMsg = err.response?.data?.error;
+      const status = err.response?.status;
+      const detail = serverMsg
+        ? `${serverMsg}`
+        : `Erreur réseau ou serveur (${status || err.message}). Consultez les logs serveur pour plus de détails.`;
+      setImportError(detail);
     }
     setImporting(false);
+  };
+
+  const handleShowLogs = async () => {
+    try {
+      const res = await getLogs(80);
+      setLogLines(res.data.lines || []);
+      setLogsDialog(true);
+    } catch (e) {
+      setLogLines([`Impossible de récupérer les logs: ${e.message}`]);
+      setLogsDialog(true);
+    }
   };
 
   const handleSheetSelect = (name) => {
@@ -336,7 +354,17 @@ export default function Settings() {
             )}
           </Box>
 
-          {importError && <Alert severity="error" sx={{ mb: 2 }}>{importError}</Alert>}
+          {importError && (
+            <Alert severity="error" sx={{ mb: 2 }}
+              action={
+                <Button color="inherit" size="small" onClick={handleShowLogs}>
+                  Voir les logs
+                </Button>
+              }
+            >
+              {importError}
+            </Alert>
+          )}
           {importSuccess && <Alert severity="success" sx={{ mb: 2 }}>{importSuccess}</Alert>}
 
           {/* ---- Preview Results ---- */}
@@ -658,6 +686,34 @@ export default function Settings() {
           )}
         </CardContent>
       </Card>
+
+      {/* Logs dialog */}
+      <Dialog open={logsDialog} onClose={() => setLogsDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Logs serveur (dernières lignes)</DialogTitle>
+        <DialogContent>
+          <Paper sx={{
+            p: 2, bgcolor: '#1e1e1e', color: '#d4d4d4', fontFamily: 'monospace',
+            fontSize: 11, maxHeight: 500, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          }}>
+            {logLines.length > 0
+              ? logLines.map((line, i) => (
+                <Box key={i} sx={{
+                  color: line.includes('[ERROR]') ? '#f44336'
+                    : line.includes('[WARNING]') ? '#ff9800'
+                    : line.includes('[INFO]') ? '#4fc3f7' : '#d4d4d4',
+                  mb: 0.2,
+                }}>
+                  {line}
+                </Box>
+              ))
+              : 'Aucun log disponible'
+            }
+          </Paper>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setLogsDialog(false)}>Fermer</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Sheet selection dialog */}
       <Dialog open={sheetDialog} onClose={() => setSheetDialog(false)}>
