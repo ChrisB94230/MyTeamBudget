@@ -1520,11 +1520,16 @@ class BudgetHandler(SimpleHTTPRequestHandler):
         body = self.rfile.read(content_length) if content_length else b'{}'
         parsed = urlparse(self.path)
         path = parsed.path
+        content_type = self.headers.get('Content-Type', '')
 
-        try:
-            data = json.loads(body) if body else {}
-        except json.JSONDecodeError:
+        # Skip JSON parsing for multipart/form-data (binary file uploads)
+        if 'multipart/form-data' in content_type:
             data = {}
+        else:
+            try:
+                data = json.loads(body) if body else {}
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                data = {}
 
         if path == '/api/resources':
             result = add_resource(data)
