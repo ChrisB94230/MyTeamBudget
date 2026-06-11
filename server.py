@@ -1149,6 +1149,9 @@ def preview_excel_import(file_bytes, sheet_name=None, year=None):
     db_resources = conn.execute('SELECT * FROM resources WHERE year=?', (year,)).fetchall()
     db_presence = conn.execute('SELECT * FROM presence WHERE year=?', (year,)).fetchall()
     db_consumption = conn.execute('SELECT * FROM consumption WHERE year=?', (year,)).fetchall()
+    db_previsions = conn.execute(
+        "SELECT * FROM previsions WHERE year=? AND type='sortie'", (year,)
+    ).fetchall()
     conn.close()
 
     # Index existing data
@@ -1164,10 +1167,7 @@ def preview_excel_import(file_bytes, sheet_name=None, year=None):
     for c in db_consumption:
         cons_map[(c['resource_id'], c['month'])] = c['consumed']
 
-    # Also load existing previsions to detect already-processed exits
-    db_previsions = conn.execute(
-        "SELECT * FROM previsions WHERE year=? AND type='sortie'", (year,)
-    ).fetchall()
+    # Existing exits to detect already-processed exits
     existing_exits = set()
     for pv in db_previsions:
         existing_exits.add(pv['name'].strip().lower())
