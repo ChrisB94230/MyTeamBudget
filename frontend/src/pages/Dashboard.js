@@ -16,7 +16,7 @@ import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import WarningIcon from '@mui/icons-material/Warning';
 import SavingsIcon from '@mui/icons-material/Savings';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import { getDashboard, getYears } from '../services/api';
+import { getDashboard, getYears, getPresenceDashboard } from '../services/api';
 
 const COLORS = ['#1b5e20', '#ff8f00', '#1565c0', '#6a1b9a', '#c62828', '#00695c',
   '#ef6c00', '#283593', '#ad1457', '#4e342e', '#37474f', '#827717'];
@@ -46,6 +46,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const dashRef = useRef(null);
   const [data, setData] = useState(null);
+  const [presenceData, setPresenceData] = useState(null);
   const [year, setYear] = useState(null);
   const [years, setYears] = useState([]);
   const [exporting, setExporting] = useState(false);
@@ -134,6 +135,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (year) {
       getDashboard(year).then(res => setData(res.data));
+      getPresenceDashboard(year).then(res => setPresenceData(res.data));
     }
   }, [year]);
 
@@ -151,7 +153,23 @@ export default function Dashboard() {
     return { name: m, 'Budget cumulé': Math.round(budgetCum * 100) / 100, 'Consommé cumulé': Math.round(consCum * 100) / 100 };
   });
 
-  const pieData = Object.entries(data.by_activite).map(([name, value]) => ({ name, value }));
+  // Per-person presence chart data (stacked: Présence + Absences + Non consommé = Jours max)
+  const presenceChartData = presenceData && presenceData.resources
+    ? presenceData.resources
+        .filter(r => r.limite_annuelle > 0)
+        .map(r => {
+          const reste = Math.max(0, r.limite_annuelle - r.total_travaille - r.conges_pris);
+          return {
+            name: r.name.length > 14 ? r.name.substring(0, 14) + '…' : r.name,
+            fullName: r.name,
+            'Présence': r.total_travaille,
+            'Absences': r.conges_pris,
+            'Restant': Math.round(reste * 100) / 100,
+            joursMax: r.limite_annuelle,
+          };
+        })
+        .sort((a, b) => b.joursMax - a.joursMax)
+    : [];
 
   const pieStatut = [
     { name: 'Interne', value: data.by_statut.Interne },
@@ -281,33 +299,37 @@ export default function Dashboard() {
         </Grid>
         <Grid item xs={12} md={5}>
           <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>Budget par Activité</Typography>
-            <ResponsiveContainer width="100%" height={420}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="42%"
-                  outerRadius="38%"
-                  label={({ name, value, percent }) => `${name} ${Math.round(percent * 100)}%`}
-                  labelLine={{ strokeWidth: 1 }}
-                  fontSize={12}
-                >
-                  {pieData.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value) => `${value} j`} />
-                <Legend
-                  formatter={(value, entry) => {
-                    const item = pieData.find(d => d.name === value);
-                    return `${value}: ${item ? item.value : ''}j`;
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+            <Typography variant="h6" gutterBottom>Présence par Personne</Typography>
+            {presenceChartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={Math.max(420, presenceChartData.length * 40 + 80)}>
+                <BarChart data={presenceChartData} layout="vertical" margin={{ left: 10, right: 30, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" unit=" j" />
+                  <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+                  <Tooltip
+                    formatter={(value, name, props) => {
+                      if (name === 'Restant') return [`${value} j`, 'Restant à poser'];
+                      return [`${value} j`, name];
+                    }}
+                    labelFormatter={(label, payload) => {
+                      if (payload && payload[0]) {
+                        const d = payload[0].payload;
+                        return `${d.fullName} — Max: ${d.joursMax} j`;
+                      }
+                      return label;
+                    }}
+                  />
+                  <Legend />
+                  <Bar dataKey="Présence" stackId="a" fill="#1b5e20" barSize={22} />
+                  <Bar dataKey="Absences" stackId="a" fill="#ff8f00" barSize={22} />
+                  <Bar dataKey="Restant" stackId="a" fill="#e0e0e0" barSize={22} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <Typography variant="body2" color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
+                Aucune donnée de présence disponible
+              </Typography>
+            )}
           </Paper>
         </Grid>
       </Grid>

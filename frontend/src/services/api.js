@@ -32,4 +32,15 @@ export const getSettings = (year) => api.get('/settings', { params: { year } });
 export const updateSettings = (data) => api.post('/settings', data);
 export const getAllSettings = () => api.get('/settings/all');
 
+export const previewExcelImport = (file, sheetName, year) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (sheetName) formData.append('sheet_name', sheetName);
+  if (year) formData.append('year', String(year));
+  return api.post('/import/preview', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+export const applyExcelImport = (data) => api.post('/import/apply', data);
+
 export default api;

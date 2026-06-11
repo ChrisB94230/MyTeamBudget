@@ -13,6 +13,9 @@ import math
 import cgi
 import tempfile
 import shutil
+import zipfile
+import re
+import xml.etree.ElementTree as ET
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
@@ -852,6 +855,488 @@ def get_comparison(selected_years):
     return result
 
 
+# ==================== EXCEL IMPORT (zero-dependency xlsx parser) ====================
+
+def parse_xlsx(file_bytes):
+    """Parse an .xlsx file using only built-in Python modules (zipfile + xml)."""
+    NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+
+    with zipfile.ZipFile(BytesIO(file_bytes)) as zf:
+        # Read shared strings
+        shared_strings = []
+        if 'xl/sharedStrings.xml' in zf.namelist():
+            tree = ET.parse(zf.open('xl/sharedStrings.xml'))
+            for si in tree.findall(f'{NS}si'):
+                texts = si.findall(f'.//{NS}t')
+                shared_strings.append(''.join(t.text or '' for t in texts))
+
+        # Read sheet names from workbook
+        wb_tree = ET.parse(zf.open('xl/workbook.xml'))
+        sheets_info = []
+        for s in wb_tree.findall(f'{NS}sheets/{NS}sheet'):
+            sheets_info.append(s.get('name'))
+
+        # Parse all sheets
+        result = {}
+        for idx, sheet_name in enumerate(sheets_info):
+            sheet_file = f'xl/worksheets/sheet{idx + 1}.xml'
+            if sheet_file not in zf.namelist():
+                continue
+            tree = ET.parse(zf.open(sheet_file))
+            rows_data = []
+            for row_el in tree.findall(f'{NS}sheetData/{NS}row'):
+                cells = []
+                for c in row_el.findall(f'{NS}c'):
+                    ref = c.get('r', '')
+                    cell_type = c.get('t', '')
+                    val_el = c.find(f'{NS}v')
+                    val = val_el.text if val_el is not None else ''
+
+                    if cell_type == 's' and val:
+                        val = shared_strings[int(val)] if int(val) < len(shared_strings) else ''
+                    elif cell_type == 'b':
+                        val = bool(int(val)) if val else False
+
+                    # Extract column letter to determine position
+                    col_letter = re.match(r'([A-Z]+)', ref)
+                    col_idx = 0
+                    if col_letter:
+                        for ch in col_letter.group(1):
+                            col_idx = col_idx * 26 + (ord(ch) - ord('A') + 1)
+                        col_idx -= 1  # 0-based
+
+                    cells.append((col_idx, val))
+                # Fill into a list by column position
+                if cells:
+                    max_col = max(c[0] for c in cells) + 1
+                    row_list = [''] * max_col
+                    for ci, cv in cells:
+                        row_list[ci] = cv
+                    rows_data.append(row_list)
+                else:
+                    rows_data.append([])
+            result[sheet_name] = rows_data
+
+    return result
+
+
+# Mapping of French month name fragments to month number
+MONTH_NAME_MAP = {
+    'janvier': 1, 'janv': 1, 'jan': 1,
+    'février': 2, 'fevrier': 2, 'févr': 2, 'fev': 2, 'fév': 2, 'feb': 2,
+    'mars': 3, 'mar': 3,
+    'avril': 4, 'avri': 4, 'avr': 4, 'apr': 4, 'av': 4,
+    'mai': 5, 'may': 5,
+    'juin': 6, 'jun': 6,
+    'juillet': 7, 'juil': 7, 'jul': 7,
+    'août': 8, 'aout': 8, 'aou': 8, 'aoû': 8, 'aug': 8,
+    'septembre': 9, 'sept': 9, 'sep': 9,
+    'octobre': 10, 'octo': 10, 'oct': 10,
+    'novembre': 11, 'nove': 11, 'nov': 11,
+    'décembre': 12, 'decembre': 12, 'déce': 12, 'dec': 12, 'déc': 12,
+}
+
+
+def detect_month_from_header(header):
+    """Detect month number from a French column header like 'Présence Jan', 'ABS Février'."""
+    h = header.lower().strip()
+    for fragment, month_num in sorted(MONTH_NAME_MAP.items(), key=lambda x: -len(x[0])):
+        if fragment in h:
+            return month_num
+    return None
+
+
+def detect_column_type(header):
+    """Detect type: 'presence', 'abs', 'run', 'projet', 'run_other' from header."""
+    h = header.lower().strip()
+    if h.startswith('présence') or h.startswith('presence'):
+        return 'presence'
+    elif h.startswith('abs'):
+        return 'abs'
+    elif h.startswith('run_other') or h.startswith('run other'):
+        return 'run_other'
+    elif h.startswith('run'):
+        return 'run'
+    elif h.startswith('projet'):
+        return 'projet'
+    return None
+
+
+def parse_excel_sheet(rows):
+    """Parse a sheet into structured data: find header row, extract per-resource per-month values."""
+    if len(rows) < 3:
+        return {'error': 'Feuille trop courte, pas assez de lignes'}
+
+    # Find the header row (contains 'Ressource' or 'ressource')
+    header_row_idx = None
+    for i, row in enumerate(rows):
+        for cell in row:
+            if str(cell).strip().lower() in ('ressource', 'resource', 'nom'):
+                header_row_idx = i
+                break
+        if header_row_idx is not None:
+            break
+
+    if header_row_idx is None:
+        return {'error': 'Colonne "Ressource" non trouvée dans les en-têtes'}
+
+    headers = [str(c).strip() for c in rows[header_row_idx]]
+
+    # Detect year from metadata rows above the header
+    detected_year = None
+    for i in range(header_row_idx):
+        for cell in rows[i]:
+            val = str(cell).strip()
+            if re.match(r'^20\d{2}$', val):
+                detected_year = int(val)
+                break
+        if detected_year:
+            break
+
+    # Map columns
+    col_map = []  # list of (col_index, type, month)
+    resource_col = None
+    for ci, h in enumerate(headers):
+        hl = h.lower()
+        if hl in ('ressource', 'resource', 'nom'):
+            resource_col = ci
+            continue
+        ctype = detect_column_type(h)
+        month = detect_month_from_header(h)
+        if ctype and month:
+            col_map.append((ci, ctype, month))
+
+    if resource_col is None:
+        return {'error': 'Colonne "Ressource" non trouvée'}
+
+    # Extract data per resource
+    resources = []
+    for i in range(header_row_idx + 1, len(rows)):
+        row = rows[i]
+        if not row or len(row) <= resource_col:
+            continue
+        name = str(row[resource_col]).strip()
+        if not name:
+            continue
+
+        res_data = {'name': name, 'presence': {}, 'run': {}, 'projet': {}, 'abs': {}, 'run_other': {}}
+        for ci, ctype, month in col_map:
+            if ci < len(row):
+                raw_val = row[ci]
+                try:
+                    val = round(float(raw_val), 2) if raw_val != '' else 0
+                except (ValueError, TypeError):
+                    val = 0
+                res_data[ctype][month] = val
+        resources.append(res_data)
+
+    return {
+        'detected_year': detected_year,
+        'resources': resources,
+        'nb_columns': len(col_map),
+    }
+
+
+def preview_excel_import(file_bytes, sheet_name=None, year=None):
+    """Parse xlsx and compare with DB data. Returns diff for user review."""
+    try:
+        workbook = parse_xlsx(file_bytes)
+    except Exception as e:
+        return {'error': f'Erreur de lecture du fichier Excel: {str(e)}'}
+
+    if not workbook:
+        return {'error': 'Fichier Excel vide'}
+
+    sheet_names = list(workbook.keys())
+
+    # If no sheet specified, try the first one (or let user choose)
+    if sheet_name is None and len(sheet_names) == 1:
+        sheet_name = sheet_names[0]
+
+    if sheet_name is None:
+        return {'sheets': sheet_names, 'need_sheet_selection': True}
+
+    if sheet_name not in workbook:
+        return {'error': f'Onglet "{sheet_name}" non trouvé', 'sheets': sheet_names}
+
+    parsed = parse_excel_sheet(workbook[sheet_name])
+    if 'error' in parsed:
+        return parsed
+
+    if year is None:
+        year = parsed.get('detected_year') or datetime.now().year
+
+    # Load existing DB data
+    conn = get_db()
+    db_resources = conn.execute('SELECT * FROM resources WHERE year=?', (year,)).fetchall()
+    db_presence = conn.execute('SELECT * FROM presence WHERE year=?', (year,)).fetchall()
+    db_consumption = conn.execute('SELECT * FROM consumption WHERE year=?', (year,)).fetchall()
+    conn.close()
+
+    # Index existing data
+    res_by_name = {}
+    for r in db_resources:
+        res_by_name[r['name'].strip().lower()] = dict(r)
+
+    pres_map = {}  # (resource_id, month) -> value
+    for p in db_presence:
+        pres_map[(p['resource_id'], p['month'])] = p['jours_travailles']
+
+    cons_map = {}  # (resource_id, month) -> value
+    for c in db_consumption:
+        cons_map[(c['resource_id'], c['month'])] = c['consumed']
+
+    # Also load existing previsions to detect already-processed exits
+    db_previsions = conn.execute(
+        "SELECT * FROM previsions WHERE year=? AND type='sortie'", (year,)
+    ).fetchall()
+    existing_exits = set()
+    for pv in db_previsions:
+        existing_exits.add(pv['name'].strip().lower())
+
+    # Build diff
+    new_resources = []
+    conflicts = []
+    updates = []  # new data for empty months
+    inactive_exits = []  # resources flagged _INACTIVE => exit to process
+
+    for excel_res in parsed['resources']:
+        name = excel_res['name']
+        name_key = name.strip().lower()
+
+        # Detect _INACTIVE suffix
+        is_inactive = name_key.endswith('_inactive')
+        clean_name = re.sub(r'[_\s]*inactive\s*$', '', name, flags=re.IGNORECASE).strip()
+        clean_key = clean_name.lower()
+
+        # Try matching: first exact name, then without _INACTIVE suffix
+        db_res = res_by_name.get(name_key) or res_by_name.get(clean_key)
+
+        if db_res is None:
+            # New resource
+            new_resources.append({
+                'name': clean_name,
+                'excel_name': name,
+                'is_inactive': is_inactive,
+                'presence': excel_res['presence'],
+                'run': excel_res['run'],
+                'projet': excel_res['projet'],
+                'abs': excel_res['abs'],
+            })
+            continue
+
+        rid = db_res['id']
+        db_name = db_res['name']
+
+        # If resource is INACTIVE, detect the last month with presence > 0
+        if is_inactive:
+            last_active_month = 0
+            for m in range(1, 13):
+                pval = excel_res['presence'].get(m, 0)
+                if pval and float(pval) > 0:
+                    last_active_month = m
+            # Check if exit already exists in previsions
+            already_exited = clean_key in existing_exits or name_key in existing_exits
+            if not already_exited and last_active_month > 0:
+                inactive_exits.append({
+                    'resource_id': rid,
+                    'name': db_name,
+                    'excel_name': name,
+                    'last_active_month': last_active_month,
+                    'last_active_month_label': MONTH_LABELS[last_active_month - 1] if last_active_month <= 12 else '?',
+                })
+
+        # Compare presence
+        for month, excel_val in excel_res['presence'].items():
+            db_val = pres_map.get((rid, month), 0)
+            db_val = round(float(db_val or 0), 2)
+            excel_val = round(float(excel_val or 0), 2)
+
+            if db_val == 0 and excel_val != 0:
+                updates.append({
+                    'type': 'presence', 'resource_id': rid, 'name': db_name,
+                    'month': month, 'new_value': excel_val,
+                    'category': 'Présence',
+                })
+            elif db_val != 0 and excel_val != 0 and abs(db_val - excel_val) > 0.01:
+                conflicts.append({
+                    'type': 'presence', 'resource_id': rid, 'name': db_name,
+                    'month': month, 'db_value': db_val, 'excel_value': excel_val,
+                    'category': 'Présence',
+                })
+
+        # Compare consumption (Run)
+        for month, excel_val in excel_res['run'].items():
+            db_val = cons_map.get((rid, month), 0)
+            db_val = round(float(db_val or 0), 2)
+            excel_val = round(float(excel_val or 0), 2)
+
+            if db_val == 0 and excel_val != 0:
+                updates.append({
+                    'type': 'consumption', 'resource_id': rid, 'name': db_name,
+                    'month': month, 'new_value': excel_val,
+                    'category': 'Consommation Run',
+                })
+            elif db_val != 0 and excel_val != 0 and abs(db_val - excel_val) > 0.01:
+                conflicts.append({
+                    'type': 'consumption', 'resource_id': rid, 'name': db_name,
+                    'month': month, 'db_value': db_val, 'excel_value': excel_val,
+                    'category': 'Consommation Run',
+                })
+
+    return {
+        'year': year,
+        'sheet_name': sheet_name,
+        'sheets': sheet_names,
+        'new_resources': new_resources,
+        'conflicts': conflicts,
+        'updates': updates,
+        'inactive_exits': inactive_exits,
+        'summary': {
+            'nb_excel_resources': len(parsed['resources']),
+            'nb_existing': len(parsed['resources']) - len(new_resources),
+            'nb_new': len(new_resources),
+            'nb_conflicts': len(conflicts),
+            'nb_auto_updates': len(updates),
+            'nb_inactive_exits': len(inactive_exits),
+        },
+    }
+
+
+def apply_excel_import(data):
+    """Apply confirmed import changes."""
+    year = data.get('year', datetime.now().year)
+    updates = data.get('updates', [])
+    resolved_conflicts = data.get('resolved_conflicts', [])
+    new_resources = data.get('new_resources', [])
+    inactive_exits = data.get('inactive_exits', [])
+
+    conn = get_db()
+    applied = 0
+
+    # Apply auto-updates (empty months filled with new data)
+    for u in updates:
+        if u['type'] == 'presence':
+            conn.execute('''
+                INSERT INTO presence (year, month, resource_id, jours_travailles)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(year, month, resource_id) DO UPDATE SET jours_travailles=?
+            ''', (year, u['month'], u['resource_id'], u['new_value'], u['new_value']))
+            applied += 1
+        elif u['type'] == 'consumption':
+            conn.execute('''
+                INSERT INTO consumption (year, month, resource_id, consumed)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(year, month, resource_id) DO UPDATE SET consumed=?
+            ''', (year, u['month'], u['resource_id'], u['new_value'], u['new_value']))
+            applied += 1
+
+    # Apply resolved conflicts (user confirmed to overwrite)
+    for c in resolved_conflicts:
+        if c['type'] == 'presence':
+            conn.execute('''
+                INSERT INTO presence (year, month, resource_id, jours_travailles)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(year, month, resource_id) DO UPDATE SET jours_travailles=?
+            ''', (year, c['month'], c['resource_id'], c['excel_value'], c['excel_value']))
+            applied += 1
+        elif c['type'] == 'consumption':
+            conn.execute('''
+                INSERT INTO consumption (year, month, resource_id, consumed)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(year, month, resource_id) DO UPDATE SET consumed=?
+            ''', (year, c['month'], c['resource_id'], c['excel_value'], c['excel_value']))
+            applied += 1
+
+    # Process INACTIVE exits — zero budget months after departure + create exit prevision
+    for ex in inactive_exits:
+        rid = ex['resource_id']
+        last_month = ex['last_active_month']
+        res_name = ex['name']
+
+        # Zero resource budget for all months after last_active_month
+        months_to_zero = MONTHS[last_month:]  # MONTHS[last_month:] = months after departure
+        if months_to_zero:
+            set_clause = ', '.join(f'{m}=0' for m in months_to_zero)
+            conn.execute(f'UPDATE resources SET {set_clause} WHERE id=?', (rid,))
+
+        # Recalculate nb_jours_run for this resource
+        res_row = conn.execute('SELECT * FROM resources WHERE id=?', (rid,)).fetchone()
+        if res_row:
+            total_run = sum(res_row[m] or 0 for m in MONTHS)
+            conn.execute('UPDATE resources SET nb_jours_run=? WHERE id=?', (total_run, rid))
+
+        # Create exit prevision if not already existing
+        existing = conn.execute(
+            "SELECT id FROM previsions WHERE name=? AND year=? AND type='sortie'",
+            (res_name, year)
+        ).fetchone()
+        if not existing:
+            date_effet = f"{year}-{last_month:02d}-28"
+            conn.execute('''
+                INSERT INTO previsions (type, name, date_effet, motif, year,
+                    jan, feb, mar, apr, may, jun, jul, aug, sep, oct, nov, dec)
+                VALUES ('sortie', ?, ?, 'Import Excel - INACTIVE', ?, 0,0,0,0,0,0,0,0,0,0,0,0)
+            ''', (res_name, date_effet, year))
+
+        applied += 1
+
+    # Add new resources
+    for nr in new_resources:
+        name = nr['name']
+        is_inactive = nr.get('is_inactive', False)
+        statut = 'Interne'  # default, user can change later
+
+        conn.execute('''
+            INSERT INTO resources (name, year, statut, is_fictive, etp, nb_jours_total,
+                jan, feb, mar, apr, may, jun, jul, aug, sep, oct, nov, dec)
+            VALUES (?, ?, ?, ?, 1, 206, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        ''', (name, year, statut, 1 if is_inactive else 0))
+        rid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+        # Insert presence data
+        for month, val in nr.get('presence', {}).items():
+            if val:
+                conn.execute('''
+                    INSERT INTO presence (year, month, resource_id, jours_travailles)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(year, month, resource_id) DO UPDATE SET jours_travailles=?
+                ''', (year, int(month), rid, val, val))
+
+        # Insert consumption data (Run)
+        for month, val in nr.get('run', {}).items():
+            if val:
+                conn.execute('''
+                    INSERT INTO consumption (year, month, resource_id, consumed)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(year, month, resource_id) DO UPDATE SET consumed=?
+                ''', (year, int(month), rid, val, val))
+
+        # If new resource is INACTIVE, create exit prevision too
+        if is_inactive:
+            last_m = 0
+            for m in range(1, 13):
+                if nr.get('presence', {}).get(m, 0) and float(nr['presence'][m]) > 0:
+                    last_m = m
+            if last_m > 0:
+                months_to_zero = MONTHS[last_m:]
+                if months_to_zero:
+                    set_clause = ', '.join(f'{m}=0' for m in months_to_zero)
+                    conn.execute(f'UPDATE resources SET {set_clause} WHERE id=?', (rid,))
+                date_effet = f"{year}-{last_m:02d}-28"
+                conn.execute('''
+                    INSERT INTO previsions (type, name, date_effet, motif, year,
+                        jan, feb, mar, apr, may, jun, jul, aug, sep, oct, nov, dec)
+                    VALUES ('sortie', ?, ?, 'Import Excel - INACTIVE', ?, 0,0,0,0,0,0,0,0,0,0,0,0)
+                ''', (name, date_effet, year))
+
+        applied += 1
+
+    conn.commit()
+    conn.close()
+    return {'status': 'ok', 'applied': applied}
+
+
 # ==================== HTTP SERVER ====================
 
 class BudgetHandler(SimpleHTTPRequestHandler):
@@ -987,6 +1472,41 @@ class BudgetHandler(SimpleHTTPRequestHandler):
 
         elif path == '/api/settings':
             result = update_settings(data)
+            return self._json(result)
+
+        elif path == '/api/import/preview':
+            # Handle multipart file upload
+            content_type = self.headers.get('Content-Type', '')
+            if 'multipart/form-data' in content_type:
+                # Re-read the body (already consumed above, so use `body` variable)
+                environ = {
+                    'REQUEST_METHOD': 'POST',
+                    'CONTENT_TYPE': content_type,
+                    'CONTENT_LENGTH': str(len(body)),
+                }
+                fs = cgi.FieldStorage(
+                    fp=BytesIO(body),
+                    environ=environ,
+                    keep_blank_values=True,
+                )
+                file_item = fs['file'] if 'file' in fs else None
+                sheet_name = fs.getvalue('sheet_name', None)
+                import_year = fs.getvalue('year', None)
+                if import_year:
+                    import_year = int(import_year)
+
+                if file_item is None or not file_item.file:
+                    return self._json({'error': 'Aucun fichier reçu'}, 400)
+
+                file_bytes = file_item.file.read()
+                result = preview_excel_import(file_bytes, sheet_name, import_year)
+                return self._json(result)
+            else:
+                # JSON body with sheet_name selection (file already uploaded)
+                return self._json({'error': 'Content-Type multipart/form-data requis'}, 400)
+
+        elif path == '/api/import/apply':
+            result = apply_excel_import(data)
             return self._json(result)
 
         else:
