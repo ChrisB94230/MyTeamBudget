@@ -385,42 +385,42 @@ export default function Dashboard() {
       </Grid>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={7}>
-          <Paper sx={{ p: 2 }}>
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 2, height: '100%' }}>
             <Typography variant="h6" gutterBottom>Courbe Cumulée</Typography>
             <ResponsiveContainer width="100%" height={380}>
               <LineChart data={cumulData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
+                <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
-                <Legend />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Line type="monotone" dataKey="Budget cumulé" stroke="#1565c0" strokeWidth={2} dot={{ r: 3 }} />
                 <Line type="monotone" dataKey="Consommé cumulé" stroke="#ff8f00" strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           </Paper>
         </Grid>
-        <Grid item xs={12} md={5}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>Répartition Interne / Externe</Typography>
-            <ResponsiveContainer width="100%" height={420}>
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <Typography variant="h6" gutterBottom sx={{ alignSelf: 'flex-start' }}>Répartition Interne / Externe</Typography>
+            <ResponsiveContainer width="100%" height={380}>
               <PieChart>
                 <Pie
                   data={pieStatut}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
-                  cy="42%"
-                  outerRadius="38%"
-                  label={({ name, value }) => `${name}: ${value}j`}
-                  fontSize={13}
+                  cy="45%"
+                  outerRadius="40%"
+                  label={({ name, value, percent }) => `${name}: ${value}j (${Math.round(percent * 100)}%)`}
+                  fontSize={12}
                 >
                   <Cell fill="#1565c0" />
                   <Cell fill="#ff8f00" />
                 </Pie>
                 <Tooltip formatter={(value) => `${value} j`} />
-                <Legend />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
               </PieChart>
             </ResponsiveContainer>
           </Paper>
