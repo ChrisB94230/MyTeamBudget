@@ -164,8 +164,11 @@ export default function Resources() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h5" fontWeight="bold">Gestion des Ressources</Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box>
+          <Typography variant="h5">Gestion des Ressources</Typography>
+          <Typography variant="body2" color="text.secondary">Budget et ventilation mensuelle des ressources</Typography>
+        </Box>
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
           <FormControl size="small" sx={{ minWidth: 120 }}>
             <InputLabel>Année</InputLabel>
@@ -192,18 +195,18 @@ export default function Resources() {
       <TableContainer component={Paper}>
         <Table size="small">
           <TableHead>
-            <TableRow sx={{ bgcolor: 'primary.main' }}>
-              <TableCell sx={{ color: 'white' }}>Nom</TableCell>
-              <TableCell sx={{ color: 'white' }}>Activité</TableCell>
-              <TableCell sx={{ color: 'white' }}>Statut</TableCell>
-              <TableCell sx={{ color: 'white' }} align="center">ETP</TableCell>
-              <TableCell sx={{ color: 'white' }} align="center">Run</TableCell>
-              <TableCell sx={{ color: 'white' }} align="center">Jours Run</TableCell>
+            <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Nom</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Activité</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Statut</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">ETP</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Run</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Jours Run</TableCell>
               {MONTH_LABELS.map(m => (
-                <TableCell key={m} sx={{ color: 'white' }} align="center">{m}</TableCell>
+                <TableCell key={m} sx={{ color: 'text.primary', fontWeight: 600 }} align="center">{m}</TableCell>
               ))}
-              <TableCell sx={{ color: 'white' }} align="center">Total</TableCell>
-              <TableCell sx={{ color: 'white' }}>Actions</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Total</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>

@@ -61,8 +61,11 @@ export default function Consumption() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h5" fontWeight="bold">Saisie de la Consommation</Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box>
+          <Typography variant="h5">Saisie de la Consommation</Typography>
+          <Typography variant="body2" color="text.secondary">Suivi mensuel des jours consommés par ressource</Typography>
+        </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
           <FormControl size="small" sx={{ minWidth: 120 }}>
             <InputLabel>Année</InputLabel>
@@ -79,15 +82,15 @@ export default function Consumption() {
       <TableContainer component={Paper}>
         <Table size="small">
           <TableHead>
-            <TableRow sx={{ bgcolor: 'primary.main' }}>
-              <TableCell sx={{ color: 'white' }}>Ressource</TableCell>
-              <TableCell sx={{ color: 'white' }}>Activité</TableCell>
-              <TableCell sx={{ color: 'white' }} align="center">Budget</TableCell>
+            <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Ressource</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Activité</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Budget</TableCell>
               {MONTH_LABELS.map(m => (
-                <TableCell key={m} sx={{ color: 'white' }} align="center">{m}</TableCell>
+                <TableCell key={m} sx={{ color: 'text.primary', fontWeight: 600 }} align="center">{m}</TableCell>
               ))}
-              <TableCell sx={{ color: 'white' }} align="center">Total</TableCell>
-              <TableCell sx={{ color: 'white' }} align="center">Reste</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Total</TableCell>
+              <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Reste</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>

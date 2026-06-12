@@ -18,22 +18,24 @@ import SavingsIcon from '@mui/icons-material/Savings';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { getDashboard, getYears, getPresenceDashboard } from '../services/api';
 
-const COLORS = ['#1b5e20', '#ff8f00', '#1565c0', '#6a1b9a', '#c62828', '#00695c',
+const COLORS = ['#1565c0', '#2e7d32', '#ff8f00', '#6a1b9a', '#c62828', '#00695c',
   '#ef6c00', '#283593', '#ad1457', '#4e342e', '#37474f', '#827717'];
 
 const MONTH_SHORT = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
 
 function KpiCard({ title, value, subtitle, icon, color }) {
   return (
-    <Card sx={{ height: '100%' }}>
-      <CardContent>
+    <Card sx={{ height: '100%', borderTop: `3px solid ${color}` }}>
+      <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <Box>
-            <Typography variant="body2" color="text.secondary">{title}</Typography>
-            <Typography variant="h4" sx={{ fontWeight: 'bold', color }}>{value}</Typography>
-            {subtitle && <Typography variant="body2" color="text.secondary">{subtitle}</Typography>}
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
+              {title}
+            </Typography>
+            <Typography variant="h4" sx={{ fontWeight: 700, color, mt: 0.5, lineHeight: 1.1 }}>{value}</Typography>
+            {subtitle && <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{subtitle}</Typography>}
           </Box>
-          <Box sx={{ bgcolor: `${color}15`, borderRadius: 2, p: 1, display: 'flex' }}>
+          <Box sx={{ bgcolor: `${color}12`, borderRadius: 2.5, p: 1.2, display: 'flex' }}>
             {icon}
           </Box>
         </Box>
@@ -183,17 +185,21 @@ export default function Dashboard() {
   return (
     <Box ref={dashRef}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h5" fontWeight="bold">Dashboard Budget RUN</Typography>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+        <Box>
+          <Typography variant="h5">Dashboard Budget RUN</Typography>
+          <Typography variant="body2" color="text.secondary">Vue d'ensemble de la consommation et du budget</Typography>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
           <Button
             variant="outlined"
-            startIcon={exporting ? <CircularProgress size={18} /> : <PictureAsPdfIcon />}
+            size="small"
+            startIcon={exporting ? <CircularProgress size={16} /> : <PictureAsPdfIcon />}
             onClick={handleExportPdf}
             disabled={exporting}
           >
-            {exporting ? 'Export...' : 'Export PDF'}
+            {exporting ? 'Export...' : 'PDF'}
           </Button>
-          <FormControl size="small" sx={{ minWidth: 120 }}>
+          <FormControl size="small" sx={{ minWidth: 110 }}>
             <InputLabel>Année</InputLabel>
             <Select value={year || ''} label="Année" onChange={(e) => setYear(e.target.value)}>
               {years.map(y => <MenuItem key={y} value={y}>{y}</MenuItem>)}
@@ -286,13 +292,13 @@ export default function Dashboard() {
             <Typography variant="h6" gutterBottom>Budget vs Consommation Mensuelle</Typography>
             <ResponsiveContainer width="100%" height={380}>
               <BarChart data={barData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
+                <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="Budget" fill="#1b5e20" />
-                <Bar dataKey="Consommé" fill="#ff8f00" />
+                <Bar dataKey="Budget" fill="#1565c0" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Consommé" fill="#ff8f00" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </Paper>
@@ -345,8 +351,8 @@ export default function Dashboard() {
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Line type="monotone" dataKey="Budget cumulé" stroke="#1b5e20" strokeWidth={2} />
-                <Line type="monotone" dataKey="Consommé cumulé" stroke="#ff8f00" strokeWidth={2} />
+                <Line type="monotone" dataKey="Budget cumulé" stroke="#1565c0" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="Consommé cumulé" stroke="#ff8f00" strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           </Paper>
@@ -366,7 +372,7 @@ export default function Dashboard() {
                   label={({ name, value }) => `${name}: ${value}j`}
                   fontSize={13}
                 >
-                  <Cell fill="#1b5e20" />
+                  <Cell fill="#1565c0" />
                   <Cell fill="#ff8f00" />
                 </Pie>
                 <Tooltip formatter={(value) => `${value} j`} />

@@ -223,17 +223,17 @@ export default function Presence() {
         <TableContainer component={Paper}>
           <Table size="small">
             <TableHead>
-              <TableRow sx={{ bgcolor: 'primary.main' }}>
-                <TableCell sx={{ color: 'white' }}>Alerte</TableCell>
-                <TableCell sx={{ color: 'white' }}>Ressource</TableCell>
-                <TableCell sx={{ color: 'white' }}>Statut</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Limite</TableCell>
+              <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Alerte</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Ressource</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Statut</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Limite</TableCell>
                 {MONTH_LABELS.map(m => (
-                  <TableCell key={m} sx={{ color: 'white' }} align="center">{m}</TableCell>
+                  <TableCell key={m} sx={{ color: 'text.primary', fontWeight: 600 }} align="center">{m}</TableCell>
                 ))}
-                <TableCell sx={{ color: 'white' }} align="center">Total</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Reste</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Avancement</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Total</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Reste</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Avancement</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -319,19 +319,19 @@ export default function Presence() {
         <TableContainer component={Paper}>
           <Table size="small">
             <TableHead>
-              <TableRow sx={{ bgcolor: 'primary.main' }}>
-                <TableCell sx={{ color: 'white' }}>Alerte</TableCell>
-                <TableCell sx={{ color: 'white' }}>Ressource</TableCell>
-                <TableCell sx={{ color: 'white' }}>Statut</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Limite / an</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Travaillé</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Rythme / mois</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Rythme théorique</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Projection annuelle</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Épuisement prévu</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Congés pris</TableCell>
-                <TableCell sx={{ color: 'white' }} align="center">Congés attendus</TableCell>
-                <TableCell sx={{ color: 'white' }}>Diagnostic</TableCell>
+              <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Alerte</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Ressource</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Statut</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Limite / an</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Travaillé</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Rythme / mois</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Rythme théorique</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Projection annuelle</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Épuisement prévu</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Congés pris</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }} align="center">Congés attendus</TableCell>
+                <TableCell sx={{ color: 'text.primary', fontWeight: 600 }}>Diagnostic</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
