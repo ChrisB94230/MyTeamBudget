@@ -155,23 +155,26 @@ export default function Dashboard() {
     return { name: m, 'Budget cumulé': Math.round(budgetCum * 100) / 100, 'Consommé cumulé': Math.round(consCum * 100) / 100 };
   });
 
-  // Per-person presence chart data (stacked: Présence + Absences + Non consommé = Jours max)
-  const presenceChartData = presenceData && presenceData.resources
-    ? presenceData.resources
-        .filter(r => r.limite_annuelle > 0)
-        .map(r => {
-          const reste = Math.max(0, r.limite_annuelle - r.total_travaille - r.conges_pris);
-          return {
-            name: r.name.length > 14 ? r.name.substring(0, 14) + '…' : r.name,
-            fullName: r.name,
-            'Présence': r.total_travaille,
-            'Absences': r.conges_pris,
-            'Restant': Math.round(reste * 100) / 100,
-            joursMax: r.limite_annuelle,
-          };
-        })
-        .sort((a, b) => b.joursMax - a.joursMax)
-    : [];
+  // Per-person presence chart data split by statut
+  const buildPresenceData = (statut) => {
+    if (!presenceData || !presenceData.resources) return [];
+    return presenceData.resources
+      .filter(r => r.limite_annuelle > 0 && r.statut === statut)
+      .map(r => {
+        const reste = Math.max(0, r.limite_annuelle - r.total_travaille - r.conges_pris);
+        return {
+          name: r.name.length > 14 ? r.name.substring(0, 14) + '…' : r.name,
+          fullName: r.name,
+          'Présence': r.total_travaille,
+          'Absences': r.conges_pris,
+          'Restant': Math.round(reste * 100) / 100,
+          joursMax: r.limite_annuelle,
+        };
+      })
+      .sort((a, b) => b.joursMax - a.joursMax);
+  };
+  const presenceInternes = buildPresenceData('Interne');
+  const presenceExternes = buildPresenceData('Externe');
 
   const pieStatut = [
     { name: 'Interne', value: data.by_statut.Interne },
@@ -287,33 +290,36 @@ export default function Dashboard() {
       </Grid>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={7}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>Budget vs Consommation Mensuelle</Typography>
+        <Grid item xs={12} md={4}>
+          <Paper sx={{ p: 2, height: '100%' }}>
+            <Typography variant="h6" gutterBottom>Budget vs Consommation</Typography>
             <ResponsiveContainer width="100%" height={380}>
               <BarChart data={barData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
-                <Legend />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Bar dataKey="Budget" fill="#1565c0" radius={[3, 3, 0, 0]} />
                 <Bar dataKey="Consommé" fill="#ff8f00" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </Paper>
         </Grid>
-        <Grid item xs={12} md={5}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>Présence par Personne</Typography>
-            {presenceChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={Math.max(420, presenceChartData.length * 40 + 80)}>
-                <BarChart data={presenceChartData} layout="vertical" margin={{ left: 10, right: 30, top: 5, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" unit=" j" />
-                  <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+        <Grid item xs={12} md={4}>
+          <Paper sx={{ p: 2, height: '100%' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+              <Typography variant="h6">Présence Internes</Typography>
+              <Chip label={presenceInternes.length} size="small" color="primary" variant="outlined" />
+            </Box>
+            {presenceInternes.length > 0 ? (
+              <ResponsiveContainer width="100%" height={Math.max(380, presenceInternes.length * 36 + 60)}>
+                <BarChart data={presenceInternes} layout="vertical" margin={{ left: 0, right: 20, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                  <XAxis type="number" unit=" j" tick={{ fontSize: 10 }} />
+                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11 }} />
                   <Tooltip
-                    formatter={(value, name, props) => {
+                    formatter={(value, name) => {
                       if (name === 'Restant') return [`${value} j`, 'Restant à poser'];
                       return [`${value} j`, name];
                     }}
@@ -325,15 +331,53 @@ export default function Dashboard() {
                       return label;
                     }}
                   />
-                  <Legend />
-                  <Bar dataKey="Présence" stackId="a" fill="#1b5e20" barSize={22} />
-                  <Bar dataKey="Absences" stackId="a" fill="#ff8f00" barSize={22} />
-                  <Bar dataKey="Restant" stackId="a" fill="#e0e0e0" barSize={22} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="Présence" stackId="a" fill="#2e7d32" barSize={18} radius={[0, 2, 2, 0]} />
+                  <Bar dataKey="Absences" stackId="a" fill="#ff8f00" barSize={18} />
+                  <Bar dataKey="Restant" stackId="a" fill="#e8e8e8" barSize={18} radius={[0, 2, 2, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
               <Typography variant="body2" color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
-                Aucune donnée de présence disponible
+                Aucun interne
+              </Typography>
+            )}
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Paper sx={{ p: 2, height: '100%' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+              <Typography variant="h6">Présence Externes</Typography>
+              <Chip label={presenceExternes.length} size="small" color="secondary" variant="outlined" />
+            </Box>
+            {presenceExternes.length > 0 ? (
+              <ResponsiveContainer width="100%" height={Math.max(380, presenceExternes.length * 36 + 60)}>
+                <BarChart data={presenceExternes} layout="vertical" margin={{ left: 0, right: 20, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                  <XAxis type="number" unit=" j" tick={{ fontSize: 10 }} />
+                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11 }} />
+                  <Tooltip
+                    formatter={(value, name) => {
+                      if (name === 'Restant') return [`${value} j`, 'Restant à poser'];
+                      return [`${value} j`, name];
+                    }}
+                    labelFormatter={(label, payload) => {
+                      if (payload && payload[0]) {
+                        const d = payload[0].payload;
+                        return `${d.fullName} — Max: ${d.joursMax} j`;
+                      }
+                      return label;
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="Présence" stackId="a" fill="#2e7d32" barSize={18} radius={[0, 2, 2, 0]} />
+                  <Bar dataKey="Absences" stackId="a" fill="#ff8f00" barSize={18} />
+                  <Bar dataKey="Restant" stackId="a" fill="#e8e8e8" barSize={18} radius={[0, 2, 2, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <Typography variant="body2" color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
+                Aucun externe
               </Typography>
             )}
           </Paper>
