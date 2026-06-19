@@ -385,10 +385,35 @@ def update_prevision(prevision_id, data):
 
 def delete_prevision(prevision_id):
     conn = get_db()
-    cur = conn.execute('DELETE FROM previsions WHERE id=?', (prevision_id,))
+    prev = conn.execute('SELECT * FROM previsions WHERE id=?', (prevision_id,)).fetchone()
+    if not prev:
+        conn.close()
+        return False
+
+    if prev['type'] == 'entree':
+        conn.execute('DELETE FROM resources WHERE name=? AND year=?',
+                      (prev['name'], prev['year']))
+
+    elif prev['type'] == 'sortie':
+        res = conn.execute('SELECT * FROM resources WHERE name=? AND year=?',
+                            (prev['name'], prev['year'])).fetchone()
+        if res:
+            updates = {}
+            new_run = 0
+            for m in MONTHS:
+                restored = (res[m] or 0) - (prev[m] or 0)
+                updates[m] = rd(restored)
+                new_run += restored
+            set_clause = ', '.join(f'{m}=?' for m in MONTHS)
+            conn.execute(
+                f'UPDATE resources SET {set_clause}, nb_jours_run=? WHERE id=?',
+                list(updates.values()) + [rd(new_run), res['id']]
+            )
+
+    conn.execute('DELETE FROM previsions WHERE id=?', (prevision_id,))
     conn.commit()
     conn.close()
-    return cur.rowcount > 0
+    return True
 
 
 def apply_resource_exit(data):
@@ -498,13 +523,14 @@ def apply_resource_entry(data):
     year = data.get('year', datetime.now().year)
     etp = safe_float(data.get('etp'), 1)
     run = safe_float(data.get('repartition_run'), 1)
-    nb_jours_total = safe_float(data.get('nb_jours_total'),
-                                 206 if data.get('statut') == 'Interne' else 210)
+    nb_jours_total_full = safe_float(data.get('nb_jours_total'),
+                                      206 if data.get('statut') == 'Interne' else 210)
+
+    active_months = 12 - start_month
+    nb_jours_total = rd(nb_jours_total_full * active_months / 12) if active_months > 0 else 0
     nb_jours_run = rd(nb_jours_total * etp * run)
 
-    # Distribute budget only on active months
-    active_months = 12 - start_month
-    monthly_val = rd(nb_jours_run / 12) if active_months > 0 else 0
+    monthly_val = rd(nb_jours_run / active_months) if active_months > 0 else 0
 
     month_data = {}
     for i, m in enumerate(MONTHS):
