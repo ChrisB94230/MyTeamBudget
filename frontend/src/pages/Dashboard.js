@@ -3,8 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import {
   Box, Card, CardContent, Grid, Typography, Paper, Chip, Alert,
   FormControl, InputLabel, Select, MenuItem, Button, CircularProgress,
+  IconButton, Tooltip as MuiTooltip,
 } from '@mui/material';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line,
@@ -16,16 +19,38 @@ import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import WarningIcon from '@mui/icons-material/Warning';
 import SavingsIcon from '@mui/icons-material/Savings';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import { getDashboard, getYears, getPresenceDashboard } from '../services/api';
+import { getDashboard, getYears, getPresenceDashboard, getResources, getConsumption } from '../services/api';
+import * as XLSX from 'xlsx';
 
 const COLORS = ['#1565c0', '#2e7d32', '#ff8f00', '#6a1b9a', '#c62828', '#00695c',
   '#ef6c00', '#283593', '#ad1457', '#4e342e', '#37474f', '#827717'];
 
 const MONTH_SHORT = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+const MONTH_FULL = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 
-function KpiCard({ title, value, subtitle, icon, color }) {
+function InfoTip({ text }) {
   return (
-    <Card sx={{ height: '100%', borderTop: `3px solid ${color}` }}>
+    <MuiTooltip
+      title={<Typography variant="body2" sx={{ p: 0.5 }}>{text}</Typography>}
+      arrow
+      placement="top"
+      enterTouchDelay={0}
+    >
+      <IconButton size="small" sx={{ opacity: 0.5, '&:hover': { opacity: 1 } }}>
+        <InfoOutlinedIcon sx={{ fontSize: 18 }} />
+      </IconButton>
+    </MuiTooltip>
+  );
+}
+
+function KpiCard({ title, value, subtitle, icon, color, tooltip }) {
+  return (
+    <Card sx={{ height: '100%', borderTop: `3px solid ${color}`, position: 'relative' }}>
+      {tooltip && (
+        <Box sx={{ position: 'absolute', top: 2, right: 2 }}>
+          <InfoTip text={tooltip} />
+        </Box>
+      )}
       <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <Box sx={{ flex: 1 }}>
@@ -52,6 +77,74 @@ export default function Dashboard() {
   const [year, setYear] = useState(null);
   const [years, setYears] = useState([]);
   const [exporting, setExporting] = useState(false);
+  const [exportingXls, setExportingXls] = useState(false);
+
+  const handleExportExcel = useCallback(async () => {
+    if (!year || !data) return;
+    setExportingXls(true);
+    try {
+      const [resRes, consRes] = await Promise.all([
+        getResources(year),
+        getConsumption(year),
+      ]);
+      const wb = XLSX.utils.book_new();
+
+      const synthRows = MONTH_SHORT.map((m, i) => ({
+        'Mois': MONTH_FULL[i],
+        'Budget (j)': data.monthly_budget[i],
+        'Consommé (j)': data.monthly_consumed[i],
+        'Écart (j)': Math.round((data.monthly_budget[i] - data.monthly_consumed[i]) * 100) / 100,
+      }));
+      synthRows.push({
+        'Mois': 'TOTAL',
+        'Budget (j)': Math.round(data.budget_total * 100) / 100,
+        'Consommé (j)': Math.round(data.total_consumed * 100) / 100,
+        'Écart (j)': Math.round(data.budget_restant * 100) / 100,
+      });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(synthRows), 'Synthèse Mensuelle');
+
+      const resources = resRes.data || [];
+      const resRows = resources.map(r => ({
+        'Nom': r.name,
+        'Statut': r.statut,
+        'Activité': r.activite,
+        'Nb Jours Total': r.nb_jours_total,
+        ...Object.fromEntries(MONTH_FULL.map((m, i) => [m, r[`m${i + 1}`] || 0])),
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resRows), 'Ressources');
+
+      const consumption = consRes.data || [];
+      const consRows = consumption.map(r => ({
+        'Nom': r.name,
+        'Statut': r.statut,
+        'Activité': r.activite,
+        ...Object.fromEntries(MONTH_FULL.map((m, i) => [m, r[`m${i + 1}`] || 0])),
+        'Total': r.total || 0,
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(consRows), 'Consommation');
+
+      const kpiRows = [
+        { 'Indicateur': 'Budget Total (j)', 'Valeur': Math.round(data.budget_total * 100) / 100 },
+        { 'Indicateur': 'Consommé (j)', 'Valeur': Math.round(data.total_consumed * 100) / 100 },
+        { 'Indicateur': 'Restant (j)', 'Valeur': Math.round(data.budget_restant * 100) / 100 },
+        { 'Indicateur': 'Nb Ressources', 'Valeur': data.nb_resources },
+        { 'Indicateur': 'ETP Interne', 'Valeur': Math.round(data.nb_etp_interne * 10) / 10 },
+        { 'Indicateur': 'ETP Externe', 'Valeur': Math.round(data.nb_etp_externe * 10) / 10 },
+        { 'Indicateur': 'Enveloppe allouée (j)', 'Valeur': data.budget_global_alloue || '' },
+        { 'Indicateur': 'Budget net enveloppe (j)', 'Valeur': data.budget_enveloppe ? Math.round(data.budget_enveloppe * 100) / 100 : '' },
+        { 'Indicateur': 'Écart enveloppe (j)', 'Valeur': data.ecart_enveloppe != null ? Math.round(data.ecart_enveloppe * 100) / 100 : '' },
+      ];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(kpiRows), 'KPIs');
+
+      const now = new Date();
+      const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+      XLSX.writeFile(wb, `Dashboard_Budget_RUN_${year}_${dateStr}.xlsx`);
+    } catch (err) {
+      console.error('Excel export error:', err);
+    } finally {
+      setExportingXls(false);
+    }
+  }, [year, data]);
 
   const handleExportPdf = useCallback(async () => {
     if (!dashRef.current) return;
@@ -196,6 +289,15 @@ export default function Dashboard() {
           <Button
             variant="outlined"
             size="small"
+            startIcon={exportingXls ? <CircularProgress size={16} /> : <TableChartIcon />}
+            onClick={handleExportExcel}
+            disabled={exportingXls}
+          >
+            {exportingXls ? 'Export...' : 'Excel'}
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
             startIcon={exporting ? <CircularProgress size={16} /> : <PictureAsPdfIcon />}
             onClick={handleExportPdf}
             disabled={exporting}
@@ -212,7 +314,10 @@ export default function Dashboard() {
       </Box>
 
       {data.budget_global_alloue > 0 && (
-        <Paper sx={{ p: 2, mb: 3, bgcolor: data.ecart_enveloppe > 0 ? '#fff3e0' : '#e8f5e9', border: '1px solid', borderColor: data.ecart_enveloppe > 0 ? '#ff8f00' : '#1b5e20' }}>
+        <Paper sx={{ p: 2, mb: 3, bgcolor: data.ecart_enveloppe > 0 ? '#fff3e0' : '#e8f5e9', border: '1px solid', borderColor: data.ecart_enveloppe > 0 ? '#ff8f00' : '#1b5e20', position: 'relative' }}>
+          <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+            <InfoTip text="Comparaison entre le budget réel calculé (somme des ressources) et l'enveloppe budgétaire allouée. Un écart positif signifie un dépassement." />
+          </Box>
           <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} sm={3}>
               <Typography variant="body2" color="text.secondary">Enveloppe allouée</Typography>
@@ -258,6 +363,7 @@ export default function Dashboard() {
             subtitle={`${data.nb_resources} ressources`}
             icon={<AccountBalanceIcon sx={{ color: '#1b5e20' }} />}
             color="#1b5e20"
+            tooltip="Somme des jours budgétés pour toutes les ressources de l'année (internes + externes)."
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
@@ -267,6 +373,7 @@ export default function Dashboard() {
             subtitle={`${pctConsumed}% du budget`}
             icon={<TrendingDownIcon sx={{ color: '#ff8f00' }} />}
             color="#ff8f00"
+            tooltip="Total des jours réellement consommés (saisis dans la page Consommation) depuis le début de l'année."
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
@@ -276,6 +383,7 @@ export default function Dashboard() {
             subtitle={data.budget_restant < 0 ? 'DÉPASSEMENT' : ''}
             icon={<CalendarTodayIcon sx={{ color: data.budget_restant < 0 ? '#c62828' : '#1565c0' }} />}
             color={data.budget_restant < 0 ? '#c62828' : '#1565c0'}
+            tooltip="Différence entre le budget total et la consommation réelle. Un chiffre négatif indique un dépassement."
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
@@ -285,13 +393,17 @@ export default function Dashboard() {
             subtitle={`${Math.round(data.nb_etp_interne * 10) / 10} Int. / ${Math.round(data.nb_etp_externe * 10) / 10} Ext.`}
             icon={<PeopleIcon sx={{ color: '#6a1b9a' }} />}
             color="#6a1b9a"
+            tooltip="Équivalent Temps Plein : nombre de ressources rapporté à un temps plein annuel. Réparti entre internes et externes."
           />
         </Grid>
       </Grid>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 2, height: '100%' }}>
+          <Paper sx={{ p: 2, height: '100%', position: 'relative' }}>
+            <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+              <InfoTip text="Budget mensuel prévu (bleu) comparé à la consommation réelle saisie (orange) pour chaque mois de l'année." />
+            </Box>
             <Typography variant="h6" gutterBottom>Budget vs Consommation</Typography>
             <ResponsiveContainer width="100%" height={380}>
               <BarChart data={barData}>
@@ -307,7 +419,10 @@ export default function Dashboard() {
           </Paper>
         </Grid>
         <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 2, height: '100%' }}>
+          <Paper sx={{ p: 2, height: '100%', position: 'relative' }}>
+            <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+              <InfoTip text="Répartition du temps des ressources internes : jours de présence, absences posées et jours restants sur leur limite annuelle." />
+            </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
               <Typography variant="h6">Présence Internes</Typography>
               <Chip label={presenceInternes.length} size="small" color="primary" variant="outlined" />
@@ -345,7 +460,10 @@ export default function Dashboard() {
           </Paper>
         </Grid>
         <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 2, height: '100%' }}>
+          <Paper sx={{ p: 2, height: '100%', position: 'relative' }}>
+            <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+              <InfoTip text="Répartition du temps des ressources externes (prestataires) : jours de présence, absences et jours restants." />
+            </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
               <Typography variant="h6">Présence Externes</Typography>
               <Chip label={presenceExternes.length} size="small" color="secondary" variant="outlined" />
@@ -386,7 +504,10 @@ export default function Dashboard() {
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 2, height: '100%' }}>
+          <Paper sx={{ p: 2, height: '100%', position: 'relative' }}>
+            <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+              <InfoTip text="Évolution cumulée du budget et de la consommation mois par mois. Permet de visualiser les tendances et anticiper les dépassements." />
+            </Box>
             <Typography variant="h6" gutterBottom>Courbe Cumulée</Typography>
             <ResponsiveContainer width="100%" height={380}>
               <LineChart data={cumulData}>
@@ -402,7 +523,10 @@ export default function Dashboard() {
           </Paper>
         </Grid>
         <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <Paper sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}>
+            <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+              <InfoTip text="Proportion du budget entre ressources internes et externes en jours. Utile pour piloter le ratio d'externalisation." />
+            </Box>
             <Typography variant="h6" gutterBottom sx={{ alignSelf: 'flex-start' }}>Répartition Interne / Externe</Typography>
             <ResponsiveContainer width="100%" height={380}>
               <PieChart>
@@ -427,8 +551,31 @@ export default function Dashboard() {
         </Grid>
       </Grid>
 
+      {data.budget_alerts && data.budget_alerts.length > 0 && (
+        <Paper sx={{ p: 2, mb: 3, border: '1px solid',
+          borderColor: data.budget_alerts.some(a => a.level === 'critical') ? '#c62828' : '#ff8f00',
+          position: 'relative',
+        }}>
+          <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+            <InfoTip text="Alertes déclenchées quand la consommation dépasse les seuils configurés dans les Paramètres (par défaut 80% warning, 95% critique)." />
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+            <WarningIcon color={data.budget_alerts.some(a => a.level === 'critical') ? 'error' : 'warning'} />
+            <Typography variant="h6">Alertes Budget</Typography>
+          </Box>
+          {data.budget_alerts.map((a, i) => (
+            <Alert key={i} severity={a.level === 'critical' ? 'error' : 'warning'} sx={{ mb: 0.5 }}>
+              {a.message}
+            </Alert>
+          ))}
+        </Paper>
+      )}
+
       {data.presence_alerts && (data.presence_alerts.nb_critical > 0 || data.presence_alerts.nb_warning > 0) && (
-        <Paper sx={{ p: 2, mb: 3, border: '1px solid', borderColor: data.presence_alerts.nb_critical > 0 ? '#c62828' : '#ff8f00' }}>
+        <Paper sx={{ p: 2, mb: 3, border: '1px solid', borderColor: data.presence_alerts.nb_critical > 0 ? '#c62828' : '#ff8f00', position: 'relative' }}>
+          <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+            <InfoTip text="Alertes sur les ressources dont le temps de présence réel s'écarte significativement du budget prévu, en tenant compte des entrées/sorties." />
+          </Box>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <AccessTimeIcon color={data.presence_alerts.nb_critical > 0 ? 'error' : 'warning'} />
@@ -453,7 +600,10 @@ export default function Dashboard() {
       )}
 
       {(data.prevision_entries.length > 0 || data.prevision_exits.length > 0) && (
-        <Paper sx={{ p: 2 }}>
+        <Paper sx={{ p: 2, position: 'relative' }}>
+          <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+            <InfoTip text="Liste des entrées et sorties de ressources prévues mais pas encore appliquées. Utilisez la page Prévisions pour les valider." />
+          </Box>
           <Typography variant="h6" gutterBottom>Prévisions d'Entrées / Sorties</Typography>
           <Grid container spacing={2}>
             <Grid item xs={12} md={6}>

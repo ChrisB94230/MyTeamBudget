@@ -127,7 +127,9 @@ def init_db():
             label_reduction TEXT DEFAULT '',
             nb_jours_ouvrables_interne REAL DEFAULT 206,
             nb_jours_ouvrables_externe REAL DEFAULT 210,
-            notes TEXT DEFAULT ''
+            notes TEXT DEFAULT '',
+            alert_warning_pct REAL DEFAULT 80,
+            alert_critical_pct REAL DEFAULT 95
         );
         CREATE TABLE IF NOT EXISTS presence (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,7 +139,23 @@ def init_db():
             jours_travailles REAL DEFAULT 0,
             UNIQUE(year, month, resource_id)
         );
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            action TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_name TEXT DEFAULT '',
+            details TEXT DEFAULT '',
+            year INTEGER
+        );
     ''')
+    # Migrations for existing databases
+    try:
+        conn.execute('SELECT alert_warning_pct FROM settings LIMIT 1')
+    except sqlite3.OperationalError:
+        conn.execute('ALTER TABLE settings ADD COLUMN alert_warning_pct REAL DEFAULT 80')
+        conn.execute('ALTER TABLE settings ADD COLUMN alert_critical_pct REAL DEFAULT 95')
+
     conn.commit()
     conn.close()
 
@@ -167,6 +185,32 @@ def safe_float(val, default=0):
         return default
 
 
+# ==================== AUDIT LOG ====================
+
+def log_audit(action, entity_type, entity_name='', details='', year=None):
+    conn = get_db()
+    conn.execute(
+        'INSERT INTO audit_log (timestamp, action, entity_type, entity_name, details, year) VALUES (?,?,?,?,?,?)',
+        (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), action, entity_type, entity_name, details, year)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_audit_log(year=None, limit=100):
+    conn = get_db()
+    if year:
+        rows = conn.execute(
+            'SELECT * FROM audit_log WHERE year=? ORDER BY id DESC LIMIT ?', (year, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            'SELECT * FROM audit_log ORDER BY id DESC LIMIT ?', (limit,)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 # ==================== RESOURCES ====================
 
 def get_resources(year=None):
@@ -179,7 +223,7 @@ def get_resources(year=None):
     return [row_to_dict(r) for r in rows]
 
 
-def add_resource(data):
+def add_resource(data, _skip_audit=False):
     if not data.get('nb_jours_total'):
         data['nb_jours_total'] = 206 if data.get('statut') == 'Interne' else 210
 
@@ -215,7 +259,12 @@ def add_resource(data):
     conn.commit()
     row = conn.execute('SELECT * FROM resources WHERE id=?', (cur.lastrowid,)).fetchone()
     conn.close()
-    return row_to_dict(row)
+    result = row_to_dict(row)
+    if not _skip_audit:
+        log_audit('Ajout', 'Ressource', data.get('name', ''),
+                  f"{data.get('statut','')}, {etp} ETP, {data['nb_jours_run']}j RUN",
+                  int(safe_float(data.get('year'), datetime.now().year)))
+    return result
 
 
 def update_resource(resource_id, data):
@@ -255,14 +304,19 @@ def update_resource(resource_id, data):
     conn.commit()
     row = conn.execute('SELECT * FROM resources WHERE id=?', (resource_id,)).fetchone()
     conn.close()
+    log_audit('Modification', 'Ressource', d['name'],
+              f"{d['nb_jours_run']}j RUN", d['year'])
     return row_to_dict(row)
 
 
 def delete_resource(resource_id):
     conn = get_db()
+    res = conn.execute('SELECT name, year FROM resources WHERE id=?', (resource_id,)).fetchone()
     cur = conn.execute('DELETE FROM resources WHERE id=?', (resource_id,))
     conn.commit()
     conn.close()
+    if cur.rowcount > 0 and res:
+        log_audit('Suppression', 'Ressource', res['name'], '', res['year'])
     return cur.rowcount > 0
 
 
@@ -410,9 +464,14 @@ def delete_prevision(prevision_id):
                 list(updates.values()) + [rd(new_run), res['id']]
             )
 
+    prev_name = prev['name']
+    prev_type = prev['type']
+    prev_year = prev['year']
     conn.execute('DELETE FROM previsions WHERE id=?', (prevision_id,))
     conn.commit()
     conn.close()
+    log_audit('Suppression', 'Prévision',  prev_name,
+              f"Type: {prev_type}", prev_year)
     return True
 
 
@@ -501,6 +560,10 @@ def apply_resource_exit(data):
     updated_res = conn.execute('SELECT * FROM resources WHERE id=?', (resource_id,)).fetchone()
     conn.close()
 
+    log_audit('Sortie prévisionnelle', 'Prévision', res['name'],
+              f"Date: {date_effet}, {rd(nb_jours_removed)}j retirés, motif: {motif}",
+              year)
+
     return {
         'prevision': row_to_dict(prev_row),
         'resource': row_to_dict(updated_res),
@@ -532,9 +595,26 @@ def apply_resource_entry(data):
 
     monthly_val = rd(nb_jours_run / active_months) if active_months > 0 else 0
 
+    distribution = data.get('distribution', 'uniforme')
+    custom_months = data.get('custom_months', {})
+
     month_data = {}
-    for i, m in enumerate(MONTHS):
-        month_data[m] = monthly_val if i >= start_month else 0
+    if distribution == 'manuel' and custom_months:
+        for i, m in enumerate(MONTHS):
+            month_data[m] = safe_float(custom_months.get(m)) if i >= start_month else 0
+        nb_jours_run = rd(sum(month_data.values()))
+        nb_jours_total = rd(nb_jours_run / (etp * run)) if etp * run > 0 else nb_jours_run
+    elif distribution == 'proportionnel':
+        jo_active = [JOURS_OUVRABLES_PAR_MOIS[i] for i in range(start_month, 12)]
+        total_jo = sum(jo_active) or 1
+        for i, m in enumerate(MONTHS):
+            if i >= start_month:
+                month_data[m] = rd(nb_jours_run * JOURS_OUVRABLES_PAR_MOIS[i] / total_jo)
+            else:
+                month_data[m] = 0
+    else:
+        for i, m in enumerate(MONTHS):
+            month_data[m] = monthly_val if i >= start_month else 0
 
     # Create the resource
     resource = add_resource({
@@ -546,7 +626,7 @@ def apply_resource_entry(data):
         'nb_jours_total': nb_jours_total,
         'year': year,
         **month_data,
-    })
+    }, _skip_audit=True)
 
     # Create the prevision record
     prev = add_prevision({
@@ -560,9 +640,108 @@ def apply_resource_entry(data):
         **month_data,
     })
 
+    log_audit('Entrée prévisionnelle', 'Prévision', data.get('name', ''),
+              f"Date: {date_effet}, {nb_jours_run}j RUN, motif: {data.get('motif','')}",
+              year)
+
     return {
         'prevision': prev,
         'resource': resource,
+    }
+
+
+def simulate_entry(data):
+    date_effet = data.get('date_effet', '')
+    try:
+        dt = datetime.strptime(date_effet, '%Y-%m-%d')
+        start_month = dt.month - 1
+    except ValueError:
+        start_month = 0
+
+    year = data.get('year', datetime.now().year)
+    etp = safe_float(data.get('etp'), 1)
+    run = safe_float(data.get('repartition_run'), 1)
+    nb_jours_total_full = safe_float(data.get('nb_jours_total'),
+                                      206 if data.get('statut') == 'Interne' else 210)
+    active_months = 12 - start_month
+    nb_jours_total = rd(nb_jours_total_full * active_months / 12) if active_months > 0 else 0
+    nb_jours_run = rd(nb_jours_total * etp * run)
+
+    distribution = data.get('distribution', 'uniforme')
+    custom_months = data.get('custom_months', {})
+    monthly_val = rd(nb_jours_run / active_months) if active_months > 0 else 0
+
+    month_data = {}
+    if distribution == 'manuel' and custom_months:
+        for i, m in enumerate(MONTHS):
+            month_data[m] = safe_float(custom_months.get(m)) if i >= start_month else 0
+        nb_jours_run = rd(sum(month_data.values()))
+    elif distribution == 'proportionnel':
+        jo_active = [JOURS_OUVRABLES_PAR_MOIS[i] for i in range(start_month, 12)]
+        total_jo = sum(jo_active) or 1
+        for i, m in enumerate(MONTHS):
+            month_data[m] = rd(nb_jours_run * JOURS_OUVRABLES_PAR_MOIS[i] / total_jo) if i >= start_month else 0
+    else:
+        for i, m in enumerate(MONTHS):
+            month_data[m] = monthly_val if i >= start_month else 0
+
+    dashboard = get_dashboard(year)
+    new_budget_total = rd(dashboard['budget_total'] + nb_jours_run)
+    new_ecart = rd(new_budget_total - dashboard['budget_enveloppe']) if dashboard['budget_global_alloue'] > 0 else 0
+
+    return {
+        'nb_jours_run': nb_jours_run,
+        'nb_jours_total': nb_jours_total,
+        'month_data': month_data,
+        'active_months': active_months,
+        'current_budget_total': dashboard['budget_total'],
+        'new_budget_total': new_budget_total,
+        'budget_enveloppe': dashboard['budget_enveloppe'],
+        'current_ecart': dashboard['ecart_enveloppe'],
+        'new_ecart': new_ecart,
+        'impact': rd(nb_jours_run),
+    }
+
+
+def simulate_exit(data):
+    resource_id = data.get('resource_id')
+    date_effet = data.get('date_effet', '')
+    year = data.get('year')
+
+    conn = get_db()
+    res = conn.execute('SELECT * FROM resources WHERE id=?', (resource_id,)).fetchone()
+    conn.close()
+
+    if not res:
+        return {'error': 'Ressource non trouvée'}
+
+    try:
+        dt = datetime.strptime(date_effet, '%Y-%m-%d')
+        depart_month = dt.month - 1
+    except ValueError:
+        return {'error': 'Date invalide'}
+
+    if not year:
+        year = res['year']
+
+    jours_removed = sum(res[m] or 0 for i, m in enumerate(MONTHS) if i >= depart_month)
+
+    dashboard = get_dashboard(year)
+    new_budget_total = rd(dashboard['budget_total'] - jours_removed)
+    new_ecart = rd(new_budget_total - dashboard['budget_enveloppe']) if dashboard['budget_global_alloue'] > 0 else 0
+
+    months_impacted = [MONTH_LABELS[i] for i in range(depart_month, 12)]
+
+    return {
+        'resource_name': res['name'],
+        'jours_removed': rd(jours_removed),
+        'months_impacted': months_impacted,
+        'current_budget_total': dashboard['budget_total'],
+        'new_budget_total': new_budget_total,
+        'budget_enveloppe': dashboard['budget_enveloppe'],
+        'current_ecart': dashboard['ecart_enveloppe'],
+        'new_ecart': new_ecart,
+        'impact': rd(-jours_removed),
     }
 
 
@@ -778,6 +957,7 @@ def get_settings(year=None):
         'budget_global_alloue': 0, 'reduction_jours': 0,
         'label_reduction': '', 'nb_jours_ouvrables_interne': 206,
         'nb_jours_ouvrables_externe': 210, 'notes': '',
+        'alert_warning_pct': 80, 'alert_critical_pct': 95,
     }
 
 
@@ -786,11 +966,13 @@ def update_settings(data):
     conn = get_db()
     conn.execute('''
         INSERT INTO settings (year, budget_global_alloue, reduction_jours,
-            label_reduction, nb_jours_ouvrables_interne, nb_jours_ouvrables_externe, notes)
-        VALUES (?,?,?,?,?,?,?)
+            label_reduction, nb_jours_ouvrables_interne, nb_jours_ouvrables_externe,
+            notes, alert_warning_pct, alert_critical_pct)
+        VALUES (?,?,?,?,?,?,?,?,?)
         ON CONFLICT(year) DO UPDATE SET
             budget_global_alloue=?, reduction_jours=?, label_reduction=?,
-            nb_jours_ouvrables_interne=?, nb_jours_ouvrables_externe=?, notes=?
+            nb_jours_ouvrables_interne=?, nb_jours_ouvrables_externe=?,
+            notes=?, alert_warning_pct=?, alert_critical_pct=?
     ''', (
         year,
         safe_float(data.get('budget_global_alloue')),
@@ -799,12 +981,16 @@ def update_settings(data):
         safe_float(data.get('nb_jours_ouvrables_interne'), 206),
         safe_float(data.get('nb_jours_ouvrables_externe'), 210),
         data.get('notes', ''),
+        safe_float(data.get('alert_warning_pct'), 80),
+        safe_float(data.get('alert_critical_pct'), 95),
         safe_float(data.get('budget_global_alloue')),
         safe_float(data.get('reduction_jours')),
         data.get('label_reduction', ''),
         safe_float(data.get('nb_jours_ouvrables_interne'), 206),
         safe_float(data.get('nb_jours_ouvrables_externe'), 210),
         data.get('notes', ''),
+        safe_float(data.get('alert_warning_pct'), 80),
+        safe_float(data.get('alert_critical_pct'), 95),
     ))
     conn.commit()
     row = conn.execute('SELECT * FROM settings WHERE year=?', (year,)).fetchone()
@@ -872,6 +1058,49 @@ def get_dashboard(year=None):
     budget_env = rd(bga - red)
     ecart = rd(budget_total - budget_env) if bga > 0 else 0
 
+    # Budget consumption alerts
+    warn_pct = safe_float(settings.get('alert_warning_pct'), 80)
+    crit_pct = safe_float(settings.get('alert_critical_pct'), 95)
+    budget_alerts = []
+    if budget_total > 0:
+        pct = rd(total_consumed / budget_total * 100)
+        if pct >= crit_pct:
+            budget_alerts.append({
+                'level': 'critical',
+                'message': f'Consommation à {pct}% du budget ({rd(total_consumed)}j / {rd(budget_total)}j)',
+            })
+        elif pct >= warn_pct:
+            budget_alerts.append({
+                'level': 'warning',
+                'message': f'Consommation à {pct}% du budget ({rd(total_consumed)}j / {rd(budget_total)}j)',
+            })
+
+    if bga > 0 and ecart > 0:
+        budget_alerts.append({
+            'level': 'critical',
+            'message': f'Dépassement enveloppe de {rd(ecart)}j ({rd(budget_total)}j réel vs {rd(budget_env)}j enveloppe)',
+        })
+
+    # Per-activity alerts
+    for act, act_budget in by_activite.items():
+        if act_budget > 0:
+            act_consumed = 0
+            for c in consumptions:
+                r_match = next((r for r in resources if r['id'] == c['resource_id'] and (r['activite'] or '') == act), None)
+                if r_match:
+                    act_consumed += c['consumed'] or 0
+            act_pct = rd(act_consumed / act_budget * 100) if act_budget > 0 else 0
+            if act_pct >= crit_pct:
+                budget_alerts.append({
+                    'level': 'critical',
+                    'message': f'{act}: {act_pct}% consommé ({rd(act_consumed)}j / {act_budget}j)',
+                })
+            elif act_pct >= warn_pct:
+                budget_alerts.append({
+                    'level': 'warning',
+                    'message': f'{act}: {act_pct}% consommé ({rd(act_consumed)}j / {act_budget}j)',
+                })
+
     try:
         pd = get_presence_dashboard(year)
         pa = {'nb_critical': pd['nb_alerts_critical'],
@@ -892,6 +1121,8 @@ def get_dashboard(year=None):
         'budget_global_alloue': bga, 'reduction_jours': red,
         'label_reduction': label_red, 'budget_enveloppe': budget_env,
         'ecart_enveloppe': ecart, 'presence_alerts': pa,
+        'budget_alerts': budget_alerts,
+        'alert_warning_pct': warn_pct, 'alert_critical_pct': crit_pct,
     }
 
 
@@ -1557,6 +1788,11 @@ class BudgetHandler(SimpleHTTPRequestHandler):
             self.wfile.write(csv_content.encode('utf-8'))
             return
 
+        elif path == '/api/audit-log':
+            year = int(p('year')) if p('year') else None
+            limit = int(p('limit', 200))
+            return self._json(get_audit_log(year, limit))
+
         elif path == '/api/logs':
             # Return last N lines of log file for troubleshooting
             n = int(params.get('lines', ['100'])[0])
@@ -1624,6 +1860,16 @@ class BudgetHandler(SimpleHTTPRequestHandler):
         elif path == '/api/previsions/entree-ressource':
             result = apply_resource_entry(data)
             return self._json(result, 201)
+
+        elif path == '/api/simulation/entry':
+            result = simulate_entry(data)
+            return self._json(result)
+
+        elif path == '/api/simulation/exit':
+            result = simulate_exit(data)
+            if 'error' in result:
+                return self._json(result, 400)
+            return self._json(result)
 
         elif path == '/api/presence':
             if isinstance(data, list):

@@ -30,6 +30,8 @@ export default function Settings() {
     nb_jours_ouvrables_interne: 206,
     nb_jours_ouvrables_externe: 210,
     notes: '',
+    alert_warning_pct: 80,
+    alert_critical_pct: 95,
   });
   const [saved, setSaved] = useState(false);
 
@@ -66,6 +68,8 @@ export default function Settings() {
         nb_jours_ouvrables_interne: res.data.nb_jours_ouvrables_interne || 206,
         nb_jours_ouvrables_externe: res.data.nb_jours_ouvrables_externe || 210,
         notes: res.data.notes || '',
+        alert_warning_pct: res.data.alert_warning_pct ?? 80,
+        alert_critical_pct: res.data.alert_critical_pct ?? 95,
       });
       setSaved(false);
     });
@@ -293,6 +297,34 @@ export default function Settings() {
                     value={form.nb_jours_ouvrables_externe}
                     onChange={e => setForm({ ...form, nb_jours_ouvrables_externe: parseInt(e.target.value) || 210 })}
                     helperText="Base de calcul pour les externes (défaut: 210)"
+                  />
+                </Grid>
+              </Grid>
+
+              <Typography variant="subtitle1" sx={{ mt: 3, mb: 1, fontWeight: 600 }}>
+                Seuils d'alerte budget
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Seuil d'attention (%)"
+                    type="number"
+                    value={form.alert_warning_pct}
+                    onChange={e => setForm({ ...form, alert_warning_pct: parseFloat(e.target.value) || 80 })}
+                    helperText="Alerte orange quand la consommation atteint ce % (défaut: 80%)"
+                    inputProps={{ min: 0, max: 100, step: 5 }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Seuil critique (%)"
+                    type="number"
+                    value={form.alert_critical_pct}
+                    onChange={e => setForm({ ...form, alert_critical_pct: parseFloat(e.target.value) || 95 })}
+                    helperText="Alerte rouge quand la consommation atteint ce % (défaut: 95%)"
+                    inputProps={{ min: 0, max: 100, step: 5 }}
                   />
                 </Grid>
               </Grid>

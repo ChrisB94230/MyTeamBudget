@@ -4,16 +4,20 @@ import {
   TextField, Typography, Paper, IconButton, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, FormControl,
   InputLabel, Select, MenuItem, Grid, Chip, Tabs, Tab,
-  Alert, Autocomplete,
+  Alert, Autocomplete, ToggleButtonGroup, ToggleButton, Collapse,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import PersonRemoveIcon from '@mui/icons-material/PersonRemove';
+import CalculateIcon from '@mui/icons-material/Calculate';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import {
   getPrevisions, addPrevision, updatePrevision, deletePrevision,
   getYears, getResources, applySortieRessource, applyEntreeRessource,
+  simulateEntry, simulateExit,
 } from '../services/api';
 
 const ACTIVITES = ['TRANSV', 'CBI/TBS', 'DATA', 'STRAT', 'CSI/FIT', 'CYBER', 'CLOUD', 'CMI'];
@@ -27,6 +31,8 @@ const emptyEntreeForm = {
   name: '', activite: '', tribu: '', statut: 'Interne',
   etp: 1, repartition_run: 1, date_effet: '', motif: '',
   year: new Date().getFullYear(),
+  distribution: 'uniforme',
+  custom_months: {},
 };
 
 export default function Previsions() {
@@ -46,6 +52,11 @@ export default function Previsions() {
   const [sortieForm, setSortieForm] = useState({ resource_id: null, date_effet: '', motif: '', year: new Date().getFullYear() });
   const [editForm, setEditForm] = useState(null);
   const [editId, setEditId] = useState(null);
+
+  // Simulation
+  const [simResult, setSimResult] = useState(null);
+  const [simLoading, setSimLoading] = useState(false);
+  const [simOpen, setSimOpen] = useState(false);
 
   // Feedback
   const [feedback, setFeedback] = useState(null);
@@ -70,6 +81,7 @@ export default function Previsions() {
 
   const handleOpenEntree = () => {
     setEntreeForm({ ...emptyEntreeForm, year });
+    setSimResult(null);
     setEntreeOpen(true);
   };
 
@@ -84,10 +96,23 @@ export default function Previsions() {
     }
   };
 
+  const handleSimulateEntree = async () => {
+    setSimLoading(true);
+    try {
+      const res = await simulateEntry(entreeForm);
+      setSimResult(res.data);
+      setSimOpen(true);
+    } catch (err) {
+      setFeedback({ type: 'error', msg: 'Erreur lors de la simulation' });
+    }
+    setSimLoading(false);
+  };
+
   // ==================== SORTIE ====================
 
   const handleOpenSortie = () => {
     setSortieForm({ resource_id: null, date_effet: '', motif: '', year });
+    setSimResult(null);
     setSortieOpen(true);
   };
 
@@ -106,6 +131,19 @@ export default function Previsions() {
       const msg = err.response?.data?.error || 'Erreur lors de l\'enregistrement';
       setFeedback({ type: 'error', msg });
     }
+  };
+
+  const handleSimulateSortie = async () => {
+    if (!sortieForm.resource_id || !sortieForm.date_effet) return;
+    setSimLoading(true);
+    try {
+      const res = await simulateExit(sortieForm);
+      setSimResult(res.data);
+      setSimOpen(true);
+    } catch (err) {
+      setFeedback({ type: 'error', msg: 'Erreur lors de la simulation' });
+    }
+    setSimLoading(false);
   };
 
   // Preview: show what months will be zeroed
@@ -145,6 +183,89 @@ export default function Previsions() {
       await deletePrevision(id);
       load();
     }
+  };
+
+  // ==================== SIMULATION RESULT PANEL ====================
+
+  const SimulationPanel = () => {
+    if (!simResult) return null;
+    const isEntry = simResult.impact > 0;
+    return (
+      <Collapse in={simOpen}>
+        <Paper sx={{ p: 2, mt: 2, bgcolor: '#f3e5f5', border: '1px solid #7b1fa2' }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <CalculateIcon sx={{ color: '#7b1fa2' }} />
+              <Typography variant="subtitle1" fontWeight="bold" color="#7b1fa2">
+                Résultat de la simulation
+              </Typography>
+            </Box>
+            <IconButton size="small" onClick={() => setSimOpen(!simOpen)}>
+              {simOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          </Box>
+
+          <Grid container spacing={2}>
+            <Grid item xs={6} sm={3}>
+              <Typography variant="body2" color="text.secondary">Impact</Typography>
+              <Typography variant="h6" fontWeight="bold" color={isEntry ? '#1b5e20' : '#c62828'}>
+                {simResult.impact > 0 ? '+' : ''}{simResult.impact} j
+              </Typography>
+            </Grid>
+            <Grid item xs={6} sm={3}>
+              <Typography variant="body2" color="text.secondary">Budget actuel</Typography>
+              <Typography variant="h6">{simResult.current_budget_total} j</Typography>
+            </Grid>
+            <Grid item xs={6} sm={3}>
+              <Typography variant="body2" color="text.secondary">Budget après</Typography>
+              <Typography variant="h6" fontWeight="bold" color="primary">
+                {simResult.new_budget_total} j
+              </Typography>
+            </Grid>
+            <Grid item xs={6} sm={3}>
+              <Typography variant="body2" color="text.secondary">Écart enveloppe après</Typography>
+              <Typography variant="h6" fontWeight="bold"
+                color={simResult.new_ecart > 0 ? '#c62828' : '#1b5e20'}>
+                {simResult.new_ecart > 0 ? '+' : ''}{simResult.new_ecart} j
+              </Typography>
+            </Grid>
+          </Grid>
+
+          {simResult.month_data && (
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                Distribution mensuelle prévisionnelle
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                {MONTHS.map((m, i) => (
+                  <Chip
+                    key={m}
+                    label={`${MONTH_LABELS[i]}: ${simResult.month_data[m] || 0}`}
+                    size="small"
+                    color={simResult.month_data[m] > 0 ? 'primary' : 'default'}
+                    variant={simResult.month_data[m] > 0 ? 'filled' : 'outlined'}
+                  />
+                ))}
+              </Box>
+            </Box>
+          )}
+
+          {simResult.months_impacted && (
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                Mois impactés: <strong>{simResult.months_impacted.join(', ')}</strong>
+              </Typography>
+            </Box>
+          )}
+
+          {simResult.new_ecart > 0 && (
+            <Alert severity="warning" sx={{ mt: 1.5 }}>
+              Cette opération entraînerait un dépassement de l'enveloppe de {simResult.new_ecart} jours
+            </Alert>
+          )}
+        </Paper>
+      </Collapse>
+    );
   };
 
   // ==================== RENDER TABLE ====================
@@ -213,6 +334,37 @@ export default function Previsions() {
     </TableContainer>
   );
 
+  // Compute preview months for custom distribution
+  const computeEntreeMonths = () => {
+    if (!entreeForm.date_effet) return {};
+    const dt = new Date(entreeForm.date_effet);
+    const startMonth = dt.getMonth();
+    const activeMonths = 12 - startMonth;
+    if (activeMonths <= 0) return {};
+
+    const nbJoursFull = entreeForm.statut === 'Interne' ? 206 : 210;
+    const nbJoursTotal = Math.round(nbJoursFull * activeMonths / 12 * 100) / 100;
+    const nbJoursRun = Math.round(nbJoursTotal * (entreeForm.etp || 1) * (entreeForm.repartition_run || 1) * 100) / 100;
+
+    const result = {};
+    if (entreeForm.distribution === 'proportionnel') {
+      const JO = [22, 21, 21, 21, 19, 20, 23, 21, 22, 21, 20, 20];
+      const joActive = JO.slice(startMonth);
+      const totalJo = joActive.reduce((a, b) => a + b, 0) || 1;
+      MONTHS.forEach((m, i) => {
+        result[m] = i >= startMonth ? Math.round(nbJoursRun * JO[i] / totalJo * 100) / 100 : 0;
+      });
+    } else {
+      const monthly = Math.round(nbJoursRun / activeMonths * 100) / 100;
+      MONTHS.forEach((m, i) => {
+        result[m] = i >= startMonth ? monthly : 0;
+      });
+    }
+    return result;
+  };
+
+  const previewMonths = entreeForm.distribution !== 'manuel' ? computeEntreeMonths() : entreeForm.custom_months;
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -252,7 +404,7 @@ export default function Previsions() {
                 options={resources.filter(r => !r.is_fictive)}
                 getOptionLabel={(r) => `${r.name} — ${r.activite} (${r.statut}, ${r.etp} ETP)`}
                 value={selectedResource || null}
-                onChange={(_, val) => setSortieForm({ ...sortieForm, resource_id: val ? val.id : null })}
+                onChange={(_, val) => { setSortieForm({ ...sortieForm, resource_id: val ? val.id : null }); setSimResult(null); }}
                 renderOption={(props, r) => (
                   <li {...props} key={r.id}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', gap: 2 }}>
@@ -281,7 +433,7 @@ export default function Previsions() {
                 fullWidth label="Date de départ" type="date"
                 value={sortieForm.date_effet}
                 InputLabelProps={{ shrink: true }}
-                onChange={e => setSortieForm({ ...sortieForm, date_effet: e.target.value })}
+                onChange={e => { setSortieForm({ ...sortieForm, date_effet: e.target.value }); setSimResult(null); }}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -323,9 +475,19 @@ export default function Previsions() {
               </Grid>
             )}
           </Grid>
+
+          <SimulationPanel />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSortieOpen(false)}>Annuler</Button>
+          <Button
+            variant="outlined" color="secondary"
+            startIcon={<CalculateIcon />}
+            onClick={handleSimulateSortie}
+            disabled={!sortieForm.resource_id || !sortieForm.date_effet || simLoading}
+          >
+            Simuler
+          </Button>
           <Button
             variant="contained" color="error"
             onClick={handleSaveSortie}
@@ -384,7 +546,7 @@ export default function Previsions() {
             <Grid item xs={6} sm={3}>
               <TextField fullWidth label="Date d'arrivée" type="date" value={entreeForm.date_effet}
                 InputLabelProps={{ shrink: true }}
-                onChange={e => setEntreeForm({ ...entreeForm, date_effet: e.target.value })} />
+                onChange={e => { setEntreeForm({ ...entreeForm, date_effet: e.target.value }); setSimResult(null); }} />
             </Grid>
             <Grid item xs={6} sm={4}>
               <FormControl fullWidth>
@@ -395,10 +557,98 @@ export default function Previsions() {
                 </Select>
               </FormControl>
             </Grid>
+
+            {/* Distribution mode */}
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                Répartition mensuelle du budget
+              </Typography>
+              <ToggleButtonGroup
+                value={entreeForm.distribution}
+                exclusive
+                onChange={(_, val) => {
+                  if (val) {
+                    setEntreeForm({ ...entreeForm, distribution: val });
+                    setSimResult(null);
+                  }
+                }}
+                size="small"
+              >
+                <ToggleButton value="uniforme">Uniforme</ToggleButton>
+                <ToggleButton value="proportionnel">Proportionnel (j. ouvrables)</ToggleButton>
+                <ToggleButton value="manuel">Manuel</ToggleButton>
+              </ToggleButtonGroup>
+            </Grid>
+
+            {/* Preview / custom months */}
+            {entreeForm.date_effet && (
+              <Grid item xs={12}>
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                  {MONTHS.map((m, i) => {
+                    const val = entreeForm.distribution === 'manuel'
+                      ? (entreeForm.custom_months[m] || 0)
+                      : (previewMonths[m] || 0);
+                    const startMonth = new Date(entreeForm.date_effet).getMonth();
+                    const isActive = i >= startMonth;
+
+                    if (entreeForm.distribution === 'manuel' && isActive) {
+                      return (
+                        <TextField
+                          key={m}
+                          size="small"
+                          label={MONTH_LABELS[i]}
+                          type="number"
+                          value={entreeForm.custom_months[m] || ''}
+                          onChange={e => setEntreeForm({
+                            ...entreeForm,
+                            custom_months: { ...entreeForm.custom_months, [m]: parseFloat(e.target.value) || 0 }
+                          })}
+                          inputProps={{ step: 0.25, min: 0 }}
+                          sx={{ width: 80 }}
+                        />
+                      );
+                    }
+                    return (
+                      <Chip
+                        key={m}
+                        label={`${MONTH_LABELS[i]}: ${val}`}
+                        size="small"
+                        color={isActive ? 'primary' : 'default'}
+                        variant={isActive ? 'filled' : 'outlined'}
+                      />
+                    );
+                  })}
+                </Box>
+                {entreeForm.distribution !== 'manuel' && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    Total: <strong>
+                      {Math.round(Object.values(previewMonths).reduce((a, b) => a + b, 0) * 100) / 100}
+                    </strong> jours RUN
+                  </Typography>
+                )}
+                {entreeForm.distribution === 'manuel' && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    Total: <strong>
+                      {Math.round(Object.values(entreeForm.custom_months).reduce((a, b) => a + b, 0) * 100) / 100}
+                    </strong> jours RUN
+                  </Typography>
+                )}
+              </Grid>
+            )}
           </Grid>
+
+          <SimulationPanel />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEntreeOpen(false)}>Annuler</Button>
+          <Button
+            variant="outlined" color="secondary"
+            startIcon={<CalculateIcon />}
+            onClick={handleSimulateEntree}
+            disabled={!entreeForm.name || !entreeForm.date_effet || simLoading}
+          >
+            Simuler
+          </Button>
           <Button variant="contained" color="success" onClick={handleSaveEntree}
             disabled={!entreeForm.name || !entreeForm.date_effet}>
             Enregistrer l'entrée

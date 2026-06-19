@@ -44,4 +44,9 @@ export const previewExcelImport = (file, sheetName, year) => {
 export const applyExcelImport = (data) => api.post('/import/apply', data);
 export const getLogs = (lines = 50) => api.get('/logs', { params: { lines } });
 
+export const getAuditLog = (year, limit = 200) => api.get('/audit-log', { params: { year, limit } });
+
+export const simulateEntry = (data) => api.post('/simulation/entry', data);
+export const simulateExit = (data) => api.post('/simulation/exit', data);
+
 export default api;

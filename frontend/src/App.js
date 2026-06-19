@@ -9,6 +9,7 @@ import Previsions from './pages/Previsions';
 import Comparison from './pages/Comparison';
 import Presence from './pages/Presence';
 import Settings from './pages/Settings';
+import AuditLog from './pages/AuditLog';
 
 const theme = createTheme({
   palette: {
@@ -101,6 +102,7 @@ function App() {
             <Route path="/comparison" element={<Comparison />} />
             <Route path="/presence" element={<Presence />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/audit" element={<AuditLog />} />
           </Routes>
         </Layout>
       </Router>
