@@ -1109,6 +1109,51 @@ def get_dashboard(year=None):
     except Exception:
         pa = {'nb_critical': 0, 'nb_warning': 0, 'alerts': []}
 
+    # Forecast / atterrissage
+    now = datetime.now()
+    months_with_data = [i for i in range(12) if monthly_consumed[i] > 0]
+    nb_months_data = len(months_with_data)
+    if nb_months_data > 0:
+        current_month = max(months_with_data) + 1
+    elif int(year) == now.year:
+        current_month = now.month
+    else:
+        current_month = 12
+
+    forecast_monthly = list(monthly_consumed)
+    if nb_months_data >= 2:
+        avg_consumption = sum(monthly_consumed[i] for i in months_with_data) / nb_months_data
+        for i in range(current_month, 12):
+            jo_ratio = JOURS_OUVRABLES_PAR_MOIS[i] / (sum(JOURS_OUVRABLES_PAR_MOIS[j] for j in months_with_data) / nb_months_data) if nb_months_data > 0 else 1
+            forecast_monthly[i] = rd(avg_consumption * jo_ratio)
+        forecast_total = rd(sum(forecast_monthly))
+        forecast_restant = rd(budget_total - forecast_total)
+        forecast_ecart_enveloppe = rd(forecast_total - budget_env) if bga > 0 else None
+        last3 = months_with_data[-3:] if len(months_with_data) >= 3 else months_with_data
+        avg_recent = sum(monthly_consumed[i] for i in last3) / len(last3)
+        forecast_trend_monthly = list(monthly_consumed)
+        for i in range(current_month, 12):
+            jo_ratio = JOURS_OUVRABLES_PAR_MOIS[i] / (sum(JOURS_OUVRABLES_PAR_MOIS[j] for j in last3) / len(last3)) if last3 else 1
+            forecast_trend_monthly[i] = rd(avg_recent * jo_ratio)
+        forecast_trend_total = rd(sum(forecast_trend_monthly))
+    else:
+        forecast_total = None
+        forecast_restant = None
+        forecast_ecart_enveloppe = None
+        forecast_trend_total = None
+        forecast_trend_monthly = None
+
+    forecast = {
+        'current_month': current_month,
+        'nb_months_data': nb_months_data,
+        'forecast_monthly': forecast_monthly,
+        'forecast_total': forecast_total,
+        'forecast_restant': forecast_restant,
+        'forecast_ecart_enveloppe': forecast_ecart_enveloppe,
+        'forecast_trend_total': forecast_trend_total,
+        'forecast_trend_monthly': forecast_trend_monthly,
+    }
+
     return {
         'year': year, 'budget_total': budget_total,
         'total_consumed': rd(total_consumed), 'budget_restant': budget_restant,
@@ -1123,6 +1168,7 @@ def get_dashboard(year=None):
         'ecart_enveloppe': ecart, 'presence_alerts': pa,
         'budget_alerts': budget_alerts,
         'alert_warning_pct': warn_pct, 'alert_critical_pct': crit_pct,
+        'forecast': forecast,
     }
 
 

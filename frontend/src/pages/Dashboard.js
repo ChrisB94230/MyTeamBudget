@@ -19,6 +19,7 @@ import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import WarningIcon from '@mui/icons-material/Warning';
 import SavingsIcon from '@mui/icons-material/Savings';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import FlightLandIcon from '@mui/icons-material/FlightLand';
 import { getDashboard, getYears, getPresenceDashboard, getResources, getConsumption } from '../services/api';
 import * as XLSX from 'xlsx';
 
@@ -242,10 +243,23 @@ export default function Dashboard() {
     Consommé: data.monthly_consumed[i],
   }));
 
+  const fc = data.forecast || {};
   const cumulData = MONTH_SHORT.map((m, i) => {
     const budgetCum = data.monthly_budget.slice(0, i + 1).reduce((a, b) => a + b, 0);
     const consCum = data.monthly_consumed.slice(0, i + 1).reduce((a, b) => a + b, 0);
-    return { name: m, 'Budget cumulé': Math.round(budgetCum * 100) / 100, 'Consommé cumulé': Math.round(consCum * 100) / 100 };
+    const row = { name: m, 'Budget cumulé': Math.round(budgetCum * 100) / 100 };
+    if (i < (fc.current_month || 12)) {
+      row['Consommé cumulé'] = Math.round(consCum * 100) / 100;
+    }
+    if (fc.forecast_monthly && fc.forecast_total && i >= (fc.current_month || 12) - 1) {
+      const fcCum = fc.forecast_monthly.slice(0, i + 1).reduce((a, b) => a + b, 0);
+      row['Projection (moy.)'] = Math.round(fcCum * 100) / 100;
+    }
+    if (fc.forecast_trend_monthly && fc.forecast_trend_total && i >= (fc.current_month || 12) - 1) {
+      const trCum = fc.forecast_trend_monthly.slice(0, i + 1).reduce((a, b) => a + b, 0);
+      row['Projection (tendance)'] = Math.round(trCum * 100) / 100;
+    }
+    return row;
   });
 
   // Per-person presence chart data split by statut
@@ -506,18 +520,24 @@ export default function Dashboard() {
         <Grid item xs={12} md={6}>
           <Paper sx={{ p: 2, height: '100%', position: 'relative' }}>
             <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
-              <InfoTip text="Évolution cumulée du budget et de la consommation mois par mois. Permet de visualiser les tendances et anticiper les dépassements." />
+              <InfoTip text="Évolution cumulée du budget et de la consommation. Les lignes en pointillés projettent l'atterrissage de fin d'année selon la moyenne globale et la tendance récente (3 derniers mois)." />
             </Box>
-            <Typography variant="h6" gutterBottom>Courbe Cumulée</Typography>
+            <Typography variant="h6" gutterBottom>Courbe Cumulée & Forecast</Typography>
             <ResponsiveContainer width="100%" height={380}>
               <LineChart data={cumulData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
                 <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip />
+                <Tooltip formatter={(v) => `${v} j`} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Line type="monotone" dataKey="Budget cumulé" stroke="#1565c0" strokeWidth={2} dot={{ r: 3 }} />
                 <Line type="monotone" dataKey="Consommé cumulé" stroke="#ff8f00" strokeWidth={2} dot={{ r: 3 }} />
+                {fc.forecast_total && (
+                  <Line type="monotone" dataKey="Projection (moy.)" stroke="#ff8f00" strokeWidth={2} strokeDasharray="8 4" dot={{ r: 2 }} connectNulls={false} />
+                )}
+                {fc.forecast_trend_total && (
+                  <Line type="monotone" dataKey="Projection (tendance)" stroke="#c62828" strokeWidth={2} strokeDasharray="4 4" dot={{ r: 2 }} connectNulls={false} />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </Paper>
@@ -550,6 +570,64 @@ export default function Dashboard() {
           </Paper>
         </Grid>
       </Grid>
+
+      {fc.forecast_total && (
+        <Paper sx={{ p: 2, mb: 3, border: '1px solid', borderColor: '#1565c0', position: 'relative' }}>
+          <Box sx={{ position: 'absolute', top: 4, right: 4 }}>
+            <InfoTip text="Projection de l'atterrissage en fin d'année. 'Moyenne globale' utilise la consommation moyenne de tous les mois écoulés. 'Tendance récente' utilise les 3 derniers mois pour capter l'accélération ou le ralentissement." />
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+            <FlightLandIcon color="primary" />
+            <Typography variant="h6">Forecast — Atterrissage {data.year}</Typography>
+            <Chip label={`${fc.nb_months_data} mois de données`} size="small" variant="outlined" />
+          </Box>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={4}>
+              <Paper variant="outlined" sx={{ p: 2, textAlign: 'center' }}>
+                <Typography variant="caption" color="text.secondary">Projection (moy. globale)</Typography>
+                <Typography variant="h5" fontWeight="bold" color={fc.forecast_restant < 0 ? 'error.main' : 'primary.main'}>
+                  {fc.forecast_total} j
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {fc.forecast_restant >= 0 ? `${fc.forecast_restant} j restants` : `Dépassement de ${Math.abs(fc.forecast_restant)} j`}
+                </Typography>
+              </Paper>
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <Paper variant="outlined" sx={{ p: 2, textAlign: 'center' }}>
+                <Typography variant="caption" color="text.secondary">Projection (tendance 3 mois)</Typography>
+                <Typography variant="h5" fontWeight="bold" color={
+                  fc.forecast_trend_total > data.budget_total ? 'error.main' : 'primary.main'
+                }>
+                  {fc.forecast_trend_total} j
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {fc.forecast_trend_total <= data.budget_total
+                    ? `${Math.round((data.budget_total - fc.forecast_trend_total) * 100) / 100} j restants`
+                    : `Dépassement de ${Math.round((fc.forecast_trend_total - data.budget_total) * 100) / 100} j`
+                  }
+                </Typography>
+              </Paper>
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <Paper variant="outlined" sx={{ p: 2, textAlign: 'center' }}>
+                <Typography variant="caption" color="text.secondary">Budget total</Typography>
+                <Typography variant="h5" fontWeight="bold" color="#1b5e20">
+                  {Math.round(data.budget_total * 100) / 100} j
+                </Typography>
+                {fc.forecast_ecart_enveloppe != null && (
+                  <Typography variant="body2" color={fc.forecast_ecart_enveloppe > 0 ? 'error.main' : 'text.secondary'}>
+                    {fc.forecast_ecart_enveloppe > 0
+                      ? `Enveloppe dépassée de ${fc.forecast_ecart_enveloppe} j`
+                      : `${Math.abs(fc.forecast_ecart_enveloppe)} j sous l'enveloppe`
+                    }
+                  </Typography>
+                )}
+              </Paper>
+            </Grid>
+          </Grid>
+        </Paper>
+      )}
 
       {data.budget_alerts && data.budget_alerts.length > 0 && (
         <Paper sx={{ p: 2, mb: 3, border: '1px solid',
