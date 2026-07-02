@@ -10,7 +10,8 @@ import sys
 import json
 import sqlite3
 import math
-import cgi
+import email.parser
+import email.policy
 import tempfile
 import shutil
 import zipfile
@@ -1935,31 +1936,35 @@ class BudgetHandler(SimpleHTTPRequestHandler):
             logger.info(f"POST /api/import/preview — Content-Type: {content_type[:80]}, body size: {len(body)}")
             if 'multipart/form-data' in content_type:
                 try:
-                    environ = {
-                        'REQUEST_METHOD': 'POST',
-                        'CONTENT_TYPE': content_type,
-                        'CONTENT_LENGTH': str(len(body)),
-                    }
-                    fs = cgi.FieldStorage(
-                        fp=BytesIO(body),
-                        environ=environ,
-                        keep_blank_values=True,
-                    )
-                    logger.debug(f"  FieldStorage keys: {list(fs.keys())}")
+                    header_bytes = f"Content-Type: {content_type}\r\n\r\n".encode('utf-8')
+                    msg = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(header_bytes + body)
+                    parts = {}
+                    for part in msg.iter_parts():
+                        cd = part.get('Content-Disposition', '')
+                        name_match = re.search(r'name="([^"]+)"', cd)
+                        if not name_match:
+                            continue
+                        name = name_match.group(1)
+                        filename_match = re.search(r'filename="([^"]*)"', cd)
+                        if filename_match:
+                            parts[name] = {'filename': filename_match.group(1), 'data': part.get_payload(decode=True)}
+                        else:
+                            parts[name] = {'value': part.get_payload(decode=True).decode('utf-8', errors='replace')}
+                    logger.debug(f"  Multipart keys: {list(parts.keys())}")
 
-                    file_item = fs['file'] if 'file' in fs else None
-                    sheet_name = fs.getvalue('sheet_name', None)
-                    import_year = fs.getvalue('year', None)
+                    file_item = parts.get('file')
+                    sheet_name = parts.get('sheet_name', {}).get('value')
+                    import_year = parts.get('year', {}).get('value')
                     if import_year:
                         import_year = int(import_year)
 
-                    if file_item is None or not file_item.file:
+                    if file_item is None or 'data' not in file_item:
                         logger.error("  Aucun fichier trouvé dans le form-data")
-                        logger.error(f"  Keys reçues: {list(fs.keys())}")
+                        logger.error(f"  Keys reçues: {list(parts.keys())}")
                         return self._json({'error': 'Aucun fichier reçu. Vérifiez que le champ s\'appelle "file".'}, 400)
 
-                    file_bytes = file_item.file.read()
-                    file_name = getattr(file_item, 'filename', 'inconnu')
+                    file_bytes = file_item['data']
+                    file_name = file_item.get('filename', 'inconnu')
                     logger.info(f"  Fichier reçu: '{file_name}', {len(file_bytes)} octets, sheet={sheet_name}, year={import_year}")
 
                     if len(file_bytes) == 0:
